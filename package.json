@@ -1,0 +1,39 @@
+{
+  "name": "fomomo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "本地读取微信指定群组消息（macOS）。密钥由 wcdb-key-tool 一次性提取，查询与解密全部在 TS 内完成。",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "setup:keys": "bash scripts/setup-keys.sh",
+    "cli": "node --import tsx src/cli.ts",
+    "sidecar": "node --import tsx src/cli.ts run",
+    "fake-swift": "node test/fake-swift.mjs node /tmp/fomomo_test.sqlite",
+    "typecheck": "tsc --noEmit",
+    "selftest": "node --import tsx test/selftest.ts",
+    "test": "for f in test/*.test.ts; do node --import tsx \"$f\" || exit 1; done",
+    "build:sidecar": "bash scripts/build-app.sh --sidecar-only",
+    "build:app": "bash scripts/build-app.sh",
+    "release": "bash scripts/release.sh"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4",
+    "better-sqlite3-multiple-ciphers": "^11.10.0",
+    "bs58": "^6.0.0",
+    "fzstd": "^0.1.1",
+    "viem": "^2.56.3",
+    "wreq-js": "3.2.0",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@11.10.0"
+}

@@ -1,0 +1,36 @@
+node_modules/
+
+# 敏感数据 —— 绝不入库。secrets/ 只放密钥（明文聊天记录不落盘）
+secrets/
+all_keys.json
+.env
+.env.*
+*.sqlite
+*.sqlite-*
+
+# pnpm 在沙盒里会 fallback 到项目内 store；正常环境用全局 ~/Library/pnpm/store
+.pnpm-store/
+.npmcache/
+
+# 构建产物 / 本机工具状态
+app/.build/
+app/.build-sb/
+dist/
+${TMPDIR:-/
+.omp/
+.claude/
+.DS_Store
+
+# 真机截图证据：含私群群名、群友消息原文、本机钱包余额与持仓，不入库（确需入库用 git add -f）
+research/**/*.png
+docs/**/*.png
+!docs/screenshots/*.png
+
+# agent 会话产物：计划 / 进度 / 发现记录、调研原稿与各轮验收日志（含本机路径、PID、私群名、钱包地址与成交记录），只留本机；
+# 值得留下的结论已压成 docs/adr/ 与 CONTEXT.md
+/HANDOFF.md
+/task_plan.md
+/progress.md
+/findings.md
+research/
+docs/research/
