@@ -73,10 +73,10 @@ macOS 桌面端「群喊单」监控悬浮窗。盯着你选定的微信 / 飞�
 
 ### 一键买卖
 
-> 下面的 `pnpm cli …` 是开发模式写法。装的是 `.app` 时等价命令是 `/Applications/Fomomo.app/Contents/Resources/node/bin/node /Applications/Fomomo.app/Contents/Resources/sidecar/cli.mjs …`（热钱包生成暂时只有命令行）。
+> 下面的 `pnpm cli …` 是开发模式写法。装的是 `.app` 时等价命令是 `/Applications/Fomomo.app/Contents/Resources/node/bin/node /Applications/Fomomo.app/Contents/Resources/sidecar/cli.mjs …`。
 
 1. 验链路：`pnpm cli okx-check`，应显示 ✓（不需要任何配置）。
-2. 生成热钱包：`pnpm cli wallet-init`。生成一把 EVM 地址（六条 EVM 链通用）和一把 Solana 地址，私钥只存本机 Keychain。
+2. 生成热钱包：弹卡 swap 区或状态栏「生成热钱包…」点一下「生成热钱包」。生成一把 EVM 地址（六条 EVM 链通用）和一把 Solana 地址，私钥只存本机 Keychain；已有钱包不会覆盖。命令行等价：`pnpm cli wallet-init`。
 3. 充值：弹卡上的「充值」或状态栏「充值地址…」显示二维码和地址；往要交易的链转**小额**原生币（RH / ETH / Base 转 ETH，BSC 转 BNB，Solana 转 SOL，Monad 转 MON）。`pnpm cli wallet-show --balances true` 查余额。
 4. 交易：弹卡交易卡输入原生币数量或点快捷额 → 拿到一次报价 → 点「买入 XXX」；卖出按持仓比例。持仓区每行的闪电按钮是行内快捷买卖，点了直接下单。
 5. 设置：dashboard「交易」页改单笔 / 每日 USD 上限、四组买入快捷额、卖出比例、各链 RPC 覆盖（默认公共节点；Robinhood 建议 Alchemy、Solana 建议 Helius）。命令行等价：`pnpm cli trade-config --rpc-bsc https://…`。

@@ -19,7 +19,7 @@
 
 - **全部业务逻辑在 sidecar，Swift 只展示**：dashboard / 统计 / 设置都在 TS 侧，逻辑放一处；Swift 缩成「浮窗 + 浏览器代理 + 渲染」。
 - **唯一例外是页面内请求**：gmgn 私有 API 必须在 gmgn.ai 页面上下文里发（进程外 = Cloudflare 403），fomo.family 的登录态由页面里的 Privy SDK 持有。sidecar 通过 `rpc` 事件让 Swift 在常驻 WKWebView 里代发，Swift 不解析 body，端点 / 字段全由 TS 决定。
-- **协议**：`src/core/types.ts` 是唯一定义。sidecar → Swift：`ready` / `state`（全量快照，150ms 合并）/ `new_token` / `kline` / `kline_bar` / `context` / `token_detail` / `settings` / `fomo_state` / `trade_state` / `trade_quote` / `trade` / `trade_holdings` / `fomo_thesis` / `gmgn_calls` / `rpc`；Swift → sidecar：`rpc_result` / `focus` / `kline` / `context` / `front_rank_visible` / `trade_quote` / `trade` / `trade_quick` / `…_more`。Swift 解码忽略未知键。
+- **协议**：`src/core/types.ts` 是唯一定义。sidecar → Swift：`ready` / `state`（全量快照，150ms 合并）/ `new_token` / `kline` / `kline_bar` / `context` / `token_detail` / `settings` / `fomo_state` / `trade_state` / `trade_quote` / `trade` / `trade_holdings` / `fomo_thesis` / `gmgn_calls` / `rpc`；Swift → sidecar：`rpc_result` / `focus` / `kline` / `context` / `front_rank_visible` / `trade_quote` / `trade` / `trade_quick` / `wallet_init` / `…_more`。Swift 解码忽略未知键。
 
 ## 2. 目录
 

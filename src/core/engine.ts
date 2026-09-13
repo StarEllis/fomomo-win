@@ -162,7 +162,7 @@ export class Engine {
     /** 只给测试指到本机假 fomo 服务；默认 prod（见 FomoService deps） */
     fomoEndpoints: { apiBase?: string; wsUrl?: string } = {},
     /** 交易模块的外部依赖（OKX 客户端工厂 / Keychain 钱包）；cli.ts 组装，测试可注入假实现或省略 */
-    tradeDeps: Pick<TradeDeps, "okx" | "wallet" | "nativePrices" | "now" | "timing"> | null = null,
+    tradeDeps: Pick<TradeDeps, "okx" | "wallet" | "createWallet" | "nativePrices" | "now" | "timing"> | null = null,
   ) {
     this.ws.onTrade = (tr) => this.onTrade(tr);
     this.fomo = new FomoService(store, bridge, {
@@ -1050,6 +1050,11 @@ export class Engine {
   /** 持仓行「闪电」：UI 的 UUID 意图 → TradeService.quickTrade（同步回执 validating → 现算数量 → 同一条执行链路） */
   tradeQuick(e: { id: string; address: string; chain: string; side: "buy" | "sell"; amount: number; pct?: number | null }): void {
     this.trade?.quickTrade({ ...e, chain: this.chainFor(e.address, e.chain) });
+  }
+
+  /** swap 卡 / 充值弹窗「生成热钱包」→ TradeService.initWallet（没有才生成；结果以 trade_state 回） */
+  walletInit(): void {
+    void this.trade?.initWallet();
   }
 
   private chainFor(address: string, given: string | undefined): string {

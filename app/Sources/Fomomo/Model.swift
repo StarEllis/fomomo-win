@@ -728,6 +728,8 @@ final class Feed {
     @ObservationIgnored var onTrade: ((String, String, String, Double, Int?, String) -> Void)?
     /// 持仓预设的一次明确点击：(id, address, chain, side, amount, pct)。报价和执行由 sidecar 同一路径完成，sidecar 同步先回 validating
     @ObservationIgnored var onQuickTrade: ((String, String, String, String, Double, Int?) -> Void)?
+    /// swap 卡 / 充值弹窗「生成热钱包」：让 sidecar 生成 burner（已有则不覆盖）；结果以下一条 `trade_state` 回
+    @ObservationIgnored var onWalletInit: (() -> Void)?
     /// 弹卡「fomo Thesis」列点了「加载更多」
     @ObservationIgnored var onThesisMore: ((String) -> Void)?
     /// 弹卡「GMGN 喊单」列点了「加载更多」

@@ -432,6 +432,8 @@ struct PopupCard: View {
     let trade: Trade?
     /// (address, chain, side, amount, sellPct, quoteId) → sidecar 下单
     let onTrade: (String, String, String, Double, Int?, String) -> Void
+    /// swap 卡门禁 / 充值弹窗「生成热钱包」→ sidecar 生成 burner（已有不覆盖）
+    let onWalletInit: () -> Void
     /// 我在这个币（address + 链精确匹配）的当前持仓（`Feed.tradeHoldings` 全量，不过滤碎屑；没持仓为 nil）→ 卡头持仓区 + K 线上画买 / 卖均价线
     let holding: TradeHolding?
     /// 「GMGN 喊单」列（sidecar `gmgn_calls`；地址不匹配就当没有 = 加载中）
@@ -647,7 +649,7 @@ struct PopupCard: View {
     private var sidebar: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 10) {
-                TradeCard(t: t, state: tradeState, quote: tradeQuote, trade: trade, now: now, onQuote: onTradeQuote, onCancel: onCancelTradeQuote, onTrade: onTrade, onClose: onClose)
+                TradeCard(t: t, state: tradeState, quote: tradeQuote, trade: trade, now: now, onQuote: onTradeQuote, onCancel: onCancelTradeQuote, onTrade: onTrade, onWalletInit: onWalletInit, onClose: onClose)
                 twitterSection
                 Hairline()
                 fomoSection
@@ -1235,7 +1237,7 @@ struct PopupCard: View {
 /// 报价由 sidecar 向 OKX 拉**一次**（只在输入数量 / 点快捷额时问：手输 400ms 防抖，瓦片点下去立刻问；数量一变先作废旧报价；本地判错不问），不依赖任何价格，没有周期刷新也没有过期时间：
 /// 报价旁显示「N 秒前」，超 30s 变灰提醒但不自动重报——执行时 sidecar 用 `/swap` 现取新路由 + tx（OKX 自带 autoSlippage ≤15% / 价格影响保护 50%）。
 /// 主按钮**只在用户点击时**把结构化意图（地址/链/方向/原生币数量/卖出百分比/报价 id）交给 sidecar，由本地 burner 钱包签名、经 OKX 路由提交。
-/// 门禁只看 `state.ready`（钱包已生成 + OKX 已配），不看 fomo 登录；不 ready 时只显示 `state.reason` 一行。
+/// 门禁只看 `state.ready`（钱包已生成 + OKX 已配），不看 fomo 登录；不 ready 时：还没钱包 → 原因 + 「生成热钱包」按钮（`WalletInitPrompt`），其余只显示 `state.reason` 一行。
 /// 下单状态（validating/submitting/submitted/confirmed/failed/unknown）按地址存在 `Feed.trades`，弹卡关了再开还在；未落定（含 unknown）时**只锁执行按钮**、禁止重发，没有定时器解锁；换方向/改金额/看报价始终可用。
 struct TradeCard: View {
     let t: Token
@@ -1250,6 +1252,8 @@ struct TradeCard: View {
     let onCancel: () -> Void
     /// (address, chain, side, amount, sellPct, quoteId) → sidecar 下单；只由主按钮点击触发
     let onTrade: (String, String, String, Double, Int?, String) -> Void
+    /// 「生成热钱包」→ sidecar `wallet_init`
+    let onWalletInit: () -> Void
     let onClose: () -> Void
     @State private var side = "buy"
     /// 买入的原生币数量字面（TextField 原样字符串）；卖出方向不用
@@ -1315,7 +1319,7 @@ struct TradeCard: View {
                             .background(FM.accent.opacity(showDeposit || empty ? 0.14 : 0.06), in: Capsule())
                     }
                     .buttonStyle(.plain).clickable(radius: 9).help("充值：各链地址与该转的币")
-                    .popover(isPresented: $showDeposit, arrowEdge: .bottom) { DepositSheet(state: state) }
+                    .popover(isPresented: $showDeposit, arrowEdge: .bottom) { DepositSheet(state: state, onWalletInit: onWalletInit) }
                 }
                 Button(action: onClose) { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).padding(4) }
                     .buttonStyle(.plain).clickable().foregroundStyle(FM.muted)
@@ -1329,6 +1333,8 @@ struct TradeCard: View {
                 action
                 if let q = liveQuote, q.ok, q.honeypot || (q.taxPct ?? 0) > 0 { taxWarning(q) }
                 if let q = liveQuote, q.ok, let n = q.networkFeeUsd, n > 1 { feeWarning }
+            } else if let reason = state.reason, !state.hasWallet {
+                WalletInitPrompt(reason: reason, stateAt: state.at, onInit: onWalletInit)
             } else {
                 Text(state.reason ?? "等待 sidecar 交易状态…").font(.system(size: 10.5)).foregroundStyle(FM.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1566,6 +1572,8 @@ struct TradeCard: View {
 /// 不用每个链一个地址，做成二维码，左边 evm 右边 sol」；再改「不要选中框效果、转什么币的提示多余」——两块同色无边框，不标当前链，链徽本身就说明转什么
 struct DepositSheet: View {
     let state: TradeState
+    /// 还没钱包时「生成热钱包」→ sidecar `wallet_init`
+    let onWalletInit: () -> Void
     /// 刚复制的块（"evm" / "sol"），1.2s 后清
     @State private var copied: String? = nil
 
@@ -1591,9 +1599,10 @@ struct DepositSheet: View {
             }
             if state.hasWallet {
                 HStack(alignment: .top, spacing: 10) { ForEach(blocks) { block($0) } }
+            } else if let reason = state.reason {
+                WalletInitPrompt(reason: reason, stateAt: state.at, onInit: onWalletInit)
             } else {
-                Text(state.reason ?? "钱包未生成：终端跑 pnpm cli wallet-init，重启 sidecar 后这里就有地址")
-                    .font(.system(size: 11)).foregroundStyle(FM.orange).fixedSize(horizontal: false, vertical: true)
+                Text("等待 sidecar 交易状态…").font(.system(size: 11)).foregroundStyle(FM.muted)
             }
         }
         .padding(14)
@@ -1640,6 +1649,49 @@ struct DepositSheet: View {
             return "\(c.slug == "robinhood" ? "RH" : c.slug.uppercased()) \(TradeCard.qty(bal.native)) \(bal.symbol)"
         }
         return parts.isEmpty ? "各链余额 0" : parts.joined(separator: " · ")
+    }
+}
+
+/// 还没有 burner 时 swap 卡门禁 / 充值弹窗共用的一块：原因一行 + 「生成热钱包」。点一下发 `wallet_init`，本地转圈直到 sidecar 回下一条 `trade_state`
+/// （成功 → 父视图切到有地址的界面，这块消失；失败 → `reason` 换成失败原因，按钮回到可点）。不本地生成、不管私钥，只是个开关；
+/// 「生成失败：…」的 reason 也走这条，按钮文案不变，让人能重试
+struct WalletInitPrompt: View {
+    /// `TradeState.reason`（没钱包 / 生成失败原因）
+    let reason: String
+    /// `TradeState.at`：任何新一条 trade_state 到了就收掉转圈（成功已切走；失败要能重点）
+    let stateAt: Double
+    let onInit: () -> Void
+    @State private var pending = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(reason).font(.system(size: 10.5)).foregroundStyle(reason.hasPrefix("生成钱包失败") ? FM.orange : FM.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                guard !pending else { return }
+                pending = true
+                onInit()
+            } label: {
+                HStack(spacing: 6) {
+                    if pending { ProgressView().controlSize(.mini) }
+                    Text(pending ? "生成中…" : "生成热钱包").font(.system(size: 12, weight: .bold)).lineLimit(1)
+                }
+                .foregroundStyle(pending ? FM.muted : FM.logoInk)
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .background(pending ? FM.surface2 : FM.accent, in: RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain).clickable(radius: 10)
+            .disabled(pending)
+            .help("生成一把 EVM 地址（五条 EVM 链通用）+ 一把 Solana 地址，私钥只存本机 Keychain；已有钱包不会覆盖")
+            .accessibilityLabel("生成热钱包")
+            Text("私钥只在这台 Mac 的 Keychain；热钱包只放打算买 meme 的小额。")
+                .font(.system(size: 10)).foregroundStyle(FM.faint).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+        .background(FM.surface2, in: RoundedRectangle(cornerRadius: 8))
+        // `at` 是秒级：同一秒内两条 trade_state 不触发；失败时 reason 必变，两个一起听
+        .onChange(of: stateAt) { _, _ in pending = false }
+        .onChange(of: reason) { _, _ in pending = false }
     }
 }
 
@@ -1775,7 +1827,7 @@ struct PopupHost: View {
                 PopupCard(t: t, auto: feed.popupAuto, now: feed.now, klines: feed.klines, context: feed.context?.address == t.address ? feed.context : nil, groups: feed.groupNames,
                           fomoState: feed.fomoState, tradeState: feed.tradeState, tradeQuote: feed.tradeQuote,
                           onTradeQuote: { feed.onTradeQuote?($0, $1, $2, $3, $4) }, onCancelTradeQuote: { feed.onCancelTradeQuote?() },
-                          trade: feed.trades[t.address], onTrade: { feed.onTrade?($0, $1, $2, $3, $4, $5) },
+                          trade: feed.trades[t.address], onTrade: { feed.onTrade?($0, $1, $2, $3, $4, $5) }, onWalletInit: { feed.onWalletInit?() },
                           holding: feed.tradeHoldings.first(where: { $0.address == t.address && $0.chain == t.knownChain }),
                           gmgnCalls: feed.gmgnCalls, thesis: feed.fomoThesis,
                           onGmgnCallsMore: { feed.onGmgnCallsMore?($0) }, onThesisMore: { feed.onThesisMore?($0) },

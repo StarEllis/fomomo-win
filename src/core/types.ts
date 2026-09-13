@@ -536,5 +536,7 @@ export type InEvent =
    * buy：amount = 原生币数量、pct 省略；sell：pct = 预设整数比例、amount 传 0（估值由 sidecar 按持仓算）。同 id 重放 / 该地址有在飞或未对账的记录 → 不新建，只回放当前记录
    */
   | { t: "trade_quick"; id: string; address: string; chain: string; side: "buy" | "sell"; amount: number; pct?: number | null }
+  /** swap 卡 / 充值弹窗「生成热钱包」：还没有 burner 时生成一把 EVM + 一把 Solana（私钥进 Keychain），成功 / 失败都回一条 `trade_state`；已有钱包 → 只重推状态，绝不覆盖 */
+  | { t: "wallet_init" }
   /** 调试：模拟一条喊单 */
   | { t: "simulate" };

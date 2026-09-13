@@ -31,7 +31,7 @@ final class StatusBar: NSObject, NSMenuDelegate {
         fomo.target = self
         menu.addItem(fomo)
         menu.addItem(.separator())
-        // burner 充值入口：弹卡里也有「充值」，这里是不开卡也能拿到地址的地方（同一个 DepositSheet，六链地址 + 该转的币）；钱包没生成时灰掉并提示命令
+        // burner 充值入口：弹卡里也有「充值」，这里是不开卡也能拿到地址的地方（同一个 DepositSheet，EVM + Solana 二维码）；钱包没生成时同一弹窗里是「生成热钱包」按钮
         depositItem.target = self
         menu.addItem(depositItem)
         menu.addItem(.separator())
@@ -43,11 +43,10 @@ final class StatusBar: NSObject, NSMenuDelegate {
 
     private let depositItem = NSMenuItem(title: "充值地址…", action: #selector(showDeposit), keyEquivalent: "")
 
-    /// 菜单弹出前按当前状态改文案
+    /// 菜单弹出前按当前状态改文案；充值项始终可点——没钱包时打开的是同一个弹窗，里面放「生成热钱包」
     func menuNeedsUpdate(_ menu: NSMenu) {
         toggleItem.title = overlay.isCollapsed ? "显示面板" : "隐藏面板"
-        depositItem.isEnabled = overlay.hasWallet
-        depositItem.title = overlay.hasWallet ? "充值地址…" : "钱包未生成：pnpm cli wallet-init"
+        depositItem.title = overlay.hasWallet ? "充值地址…" : "生成热钱包…"
     }
 
     @objc private func toggle() { overlay.setCollapsed(!overlay.isCollapsed) }

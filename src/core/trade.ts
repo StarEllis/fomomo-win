@@ -27,8 +27,10 @@ export interface TradeDeps {
   settings: () => TradeSettings;
   /** OKX 客户端；设置变了重建 */
   okx: () => OkxClient;
-  /** 从 Keychain 加载 burner；null = 还没 wallet-init */
+  /** 从 Keychain 加载 burner；null = 还没生成 */
   wallet: (rpc: TradeSettings["rpc"]) => Promise<BurnerWallet | null>;
+  /** 生成 burner（Swift「生成热钱包」按钮）；任一把已存在必须抛错，绝不覆盖 */
+  createWallet: (rpc: TradeSettings["rpc"]) => Promise<BurnerWallet>;
   /** 引擎现价（链要对上；有限正数才算有）与展示元数据 */
   priceOf: (address: string, chain: string) => number | null;
   meta: (address: string, chain: string) => { symbol: string | null; name: string | null; logo: string | null } | null;
@@ -57,6 +59,8 @@ export const MIN_USD = 1;
 const PRICE_IMPACT_PROTECTION = 50;
 /** 未落定：这些状态下该地址不接受新意图 */
 const LOCKED = new Set<TradeEvent["status"]>(["validating", "submitting", "submitted", "unknown"]);
+/** 没钱包时 trade_state.reason；Swift 看到没地址就在这行下面放「生成热钱包」按钮，所以这里不提命令行 */
+const NO_WALLET = "还没有热钱包";
 
 const isTradeChain = (c: string): c is TradeChain => (TRADE_CHAINS as readonly string[]).includes(c);
 const normAddress = (a: string, chain: string): string => (chain === "sol" ? a : a.toLowerCase());
@@ -104,6 +108,8 @@ export class TradeService {
   private wallet: BurnerWallet | null = null;
   private okx: OkxClient | null = null;
   private reason: string | null = "交易模块未启动";
+  /** 「生成热钱包」在飞：同一时刻只跑一次（并发两次 create 会互相覆盖私钥） */
+  private walletIniting = false;
   private nativeBalances = new Map<TradeChain, bigint>();
   private positions = new Map<string, Position>();
   private approveSpender = new Map<TradeChain, string>();
@@ -157,9 +163,34 @@ export class TradeService {
     }
     this.okx = this.deps.okx();
     // 唯一的门禁是钱包：OKX 凭据不在本机，没有可缺的配置
-    this.reason = this.wallet ? null : "未生成钱包：pnpm cli wallet-init";
+    this.reason = this.wallet ? null : NO_WALLET;
     this.emitState();
     await this.refreshBalances();
+  }
+
+  /**
+   * Swift「生成热钱包」按钮（`wallet_init`）：没有钱包才生成，生成后立刻 ready 并推状态 + 拉余额；已有钱包只重推一份状态（绝不覆盖——覆盖 = 资金丢失）。
+   * 失败（Keychain 拒绝 / 半把残留）把原因放进 reason 推给 UI，用户看得到；下一次 settingsChanged 会重算
+   */
+  async initWallet(): Promise<void> {
+    if (this.wallet) return this.emitState();
+    if (this.walletIniting) return;
+    this.walletIniting = true;
+    const rpc = this.deps.settings().rpc;
+    try {
+      this.wallet = await this.deps.createWallet(rpc);
+      this.reason = null;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 极端并发（CLI 同时 wallet-init）→ 已存在也算成功，重载即可；其他失败把原因给 UI
+      this.wallet = await this.deps.wallet(rpc).catch(() => null);
+      this.reason = this.wallet ? null : `生成钱包失败：${msg}`;
+      if (!this.wallet) console.error(`[trade] wallet init failed: ${msg}`);
+    } finally {
+      this.walletIniting = false;
+    }
+    this.emitState();
+    if (this.wallet) await this.refreshBalances();
   }
 
   get ready(): boolean {

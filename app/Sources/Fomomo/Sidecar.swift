@@ -91,6 +91,7 @@ final class Sidecar {
         feed.onQuickTrade = { [weak self] id, a, chain, side, amount, pct in
             self?.quickTrade(id: id, address: a, chain: chain, side: side, amount: amount, pct: pct)
         }
+        feed.onWalletInit = { [weak self] in self?.send(#"{"t":"wallet_init"}"#) }
         feed.onThesisMore = { [weak self] a in
             let obj: [String: Any] = ["t": "fomo_thesis_more", "address": a]
             if let d = try? JSONSerialization.data(withJSONObject: obj) { self?.send(String(decoding: d, as: UTF8.self)) }

@@ -49,7 +49,7 @@ async function main() {
   pnpm sidecar   (= pnpm cli run) [--group <群名/username>] [--since 6h|2026-09-03T00:00|<unix>] [--db <path>]
                                    完整 sidecar：监听 + 行情 + 落盘，stdout 推展示快照（Swift 消费）；--group 临时加一个群
   pnpm cli okx-check               发一次 supported/chain 验到 OKX 接口端点的链路（地址固定在 src/core/okx.ts）
-  pnpm cli wallet-init             生成 burner 热钱包（EVM + Solana，私钥进 Keychain）并打印地址
+  pnpm cli wallet-init             生成 burner 热钱包（EVM + Solana，私钥进 Keychain）并打印地址；界面里 swap 卡 / 充值弹窗的「生成热钱包」按钮等价
   pnpm cli wallet-show [--balances true]   显示地址（可选各链原生币余额）
   pnpm cli trade-config [--rpc-<chain> https://…]   覆盖公共 RPC 节点；sidecar 在跑则立即生效`);
     return;
@@ -77,6 +77,7 @@ async function main() {
     const engine = new Engine(store, bridge, {}, {
       okx: () => new OkxClient(),
       wallet: (rpc) => BurnerWallet.load(keychain, rpcConfig(rpc)),
+      createWallet: (rpc) => BurnerWallet.create(keychain, rpcConfig(rpc)),
       nativePrices,
     });
     nativePrices.start();
@@ -151,6 +152,7 @@ async function main() {
       else if (e.t === "trade_quote") engine.tradeQuote(e);
       else if (e.t === "trade") engine.tradeIntent(e);
       else if (e.t === "trade_quick") engine.tradeQuick(e);
+      else if (e.t === "wallet_init") engine.walletInit();
     };
 
     try {

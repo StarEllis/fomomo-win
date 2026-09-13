@@ -449,14 +449,15 @@ final class OverlayPanelController {
         reposition()
     }
 
-    /// 状态栏「充值地址…」：把 `DepositSheet` 装进 NSPopover 挂在菜单栏图标下（transient，点别处即收）。内容跟着 `feed.tradeState` 活更新
+    /// 状态栏「充值地址…」/「生成热钱包…」：把 `DepositSheet` 装进 NSPopover 挂在菜单栏图标下（transient，点别处即收）。内容跟着 `feed.tradeState` 活更新：
+    /// 没钱包时里面是「生成热钱包」按钮，生成完同一弹窗直接变成地址
     private var depositPopover: NSPopover?
     var hasWallet: Bool { feed.tradeState.hasWallet }
     func showDeposit(relativeTo view: NSView) {
         if depositPopover == nil {
             struct Root: View {
                 let feed: Feed
-                var body: some View { DepositSheet(state: feed.tradeState) }
+                var body: some View { DepositSheet(state: feed.tradeState, onWalletInit: { feed.onWalletInit?() }) }
             }
             let p = NSPopover()
             p.behavior = .transient
