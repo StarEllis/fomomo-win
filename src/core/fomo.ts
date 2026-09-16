@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 import { createTransport, fetch as wreqFetch, type Transport } from "wreq-js";
-import { proxyAgent, systemProxy } from "./proxy.js";
+import { isLoopback, proxyAgent, systemProxy } from "./proxy.js";
 import type { Bridge } from "./rpc.js";
 import type { FomoActivityRow, Store } from "./store.js";
 import { GMGN_HOLDERS_LIMIT, strictAmount, type GmgnHoldersPage } from "./gmgn.js";
@@ -242,6 +242,9 @@ export class FomoService {
     clearInterval(this.loginTimer);
     this.stopHolders();
     this.closeWs();
+    // transport 持有原生连接池（keep-alive 连接），不关会拖住进程退出
+    void this.transport?.t.close();
+    this.transport = null;
   }
 
   /** 弹卡契约：未登录 / 该链 fomo 不支持 → null */
@@ -416,10 +419,14 @@ export class FomoService {
   private transport: { key: string; t: Transport } | null = null;
   private async nodeFetch(p: { path: string; method: "GET" | "POST"; body: string | null; headers: Record<string, string> }): Promise<{ status: number; json: unknown }> {
     try {
-      const proxy = await systemProxy();
+      const base = this.deps.apiBase ?? API;
+      const proxy = isLoopback(base) ? null : await systemProxy();
       const key = proxy ? `http://${proxy.host}:${proxy.port}` : "";
-      if (this.transport?.key !== key) this.transport = { key, t: await createTransport({ browser: "safari_26", os: "macos", ...(key ? { proxy: key } : {}) }) };
-      const res = await wreqFetch((this.deps.apiBase ?? API) + p.path, {
+      if (this.transport?.key !== key) {
+        void this.transport?.t.close();
+        this.transport = { key, t: await createTransport({ browser: "safari_26", os: "macos", ...(key ? { proxy: key } : {}) }) };
+      }
+      const res = await wreqFetch(base + p.path, {
         transport: this.transport.t,
         method: p.method,
         headers: { ...p.headers, Origin: ORIGIN, Referer: `${ORIGIN}/`, "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-site" },

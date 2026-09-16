@@ -29,6 +29,8 @@ interface RawSender {
   id?: string;
   id_type?: string;
   sender_type?: string;
+  /** with_sender_name=true 时接口给的显示名（实测字段名是 sender_name，不是 name） */
+  sender_name?: string;
   name?: string;
 }
 
@@ -159,7 +161,33 @@ export function resolveLarkCli(env: NodeJS.ProcessEnv): Resolved | null {
   return null;
 }
 
-const MISSING_CLI_HINT = "未找到 lark-cli（.app 自带；开发模式请 npm i -g @larksuite/cli，或用 FOMOMO_LARK_CLI 指定路径）";
+/**
+ * 给 lark-cli 子进程用的环境：去掉 AI Agent 工作区信号（OpenClaw / Hermes / Lark Channel）。
+ * 机器上装过这类 Agent 时 lark-cli 会切到「Agent 工作区」模式：config init 直接拒绝、config show / auth status
+ * 报 not bound。fomomo 用自己创建的只读应用，不借 Agent 的应用，所以一律按普通用户环境跑。
+ */
+export function larkEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(env)) if (!/^(OPENCLAW_|HERMES_|LARK_CHANNEL)/i.test(k)) out[k] = v;
+  return out;
+}
+
+/** 从 lark-cli 失败输出里取可读错误：优先 `{ok:false,error}` 信封（多行 JSON，可能在 stdout 也可能在 stderr），否则最后一行非二维码文本 */
+export function larkErrorText(stdout: string, stderr: string): string {
+  for (const s of [stdout, stderr]) {
+    const t = s.trim();
+    const i = t.indexOf("{");
+    if (i < 0) continue;
+    try {
+      const j = JSON.parse(t.slice(i)) as { error?: string | { message?: string; hint?: string } };
+      if (typeof j.error === "string") return j.error;
+      if (j.error?.message) return j.error.message + (j.error.hint ? `（${j.error.hint}）` : "");
+    } catch { /* 非 JSON 输出 */ }
+  }
+  return (stderr || stdout).trim().split("\n").filter((l) => l.trim() && !/^[▀▄█ ]+$/.test(l)).at(-1)?.slice(0, 300) ?? "";
+}
+
+const MISSING_CLI_HINT ="未找到 lark-cli（.app 自带；开发模式请 npm i -g @larksuite/cli，或用 FOMOMO_LARK_CLI 指定路径）";
 
 interface Envelope {
   ok?: boolean;
@@ -207,7 +235,7 @@ export class LarkCliClient implements FeishuTransport {
     const child = execFile(
       bin.file,
       args,
-      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: TIMEOUT_MS, killSignal: "SIGTERM", signal, windowsHide: true },
+      { encoding: "utf8", env: larkEnv(), maxBuffer: 16 * 1024 * 1024, timeout: TIMEOUT_MS, killSignal: "SIGTERM", signal, windowsHide: true },
       (err, stdout, stderr) => {
         const e = err as (NodeJS.ErrnoException & { killed?: boolean; signal?: string }) | null; // execFile 回调的 err 类型缺 killed/signal
         if (e && e.code === "ENOENT") {
@@ -225,7 +253,7 @@ export class LarkCliClient implements FeishuTransport {
         }
         if (env && env.ok === false && env.error) return reject(classify(env.error));
         if (env && env.ok === true) return resolve(env.data);
-        const tail = (stderr || stdout).trim().split("\n").at(-1)?.slice(0, 200) ?? "";
+        const tail = larkErrorText(stdout, stderr).slice(0, 200);
         return reject(new LarkError(`lark-cli 退出码 ${e?.code ?? "?"}，输出无法解析${tail ? `：${tail}` : ""}`, "cli"));
       },
     );

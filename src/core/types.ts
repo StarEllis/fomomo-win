@@ -4,6 +4,7 @@
  */
 
 import type { Erc20Verdict } from "./erc20.js";
+import type { HoneypotVerdict } from "./honeypot.js";
 
 // ---------- 行情 ----------
 
@@ -107,6 +108,8 @@ export interface TokenState {
    * 只在 `market === null` 时有意义：确定的 non-erc20 且未过期（Engine.ERC20_TTL）→ 面板 / dashboard 都不显示（记录仍在库里）；行情一旦到达就清掉
    */
   erc20Check?: { verdict: Erc20Verdict; checkedAt: number };
+  /** 貔貅探测结论（honeypot.ts）；`honeypot` → 面板不显示、dashboard 不计入（记录仍在库里） */
+  honeypotCheck?: { verdict: HoneypotVerdict; checkedAt: number };
 }
 
 /** 官方推特本次请求状态（仅进程内，不把 loading/error 落库）。 */
@@ -409,15 +412,29 @@ export interface Settings {
   groups: string[];
   /** 监听的飞书群原始 chat_id（oc_xxx），与微信独立保存。 */
   feishuGroups: string[];
-  /** 悬浮窗尺寸与背景不透明度（0–1） */
-  panel: { width: number; height: number; backgroundOpacity: number };
+  /** 监听的 QQ 群 ID（OneBot group_id），与微信 / 飞书独立保存。 */
+  qqGroups: string[];
+  /** 悬浮窗尺寸与背景不透明度（0–1）；x / y / compact 是 Windows 壳记住的位置与收起态（macOS 不读） */
+  panel: { width: number; height: number; backgroundOpacity: number; x?: number | null; y?: number | null; compact?: boolean };
+  /** 新币自动弹卡（Windows 壳）：card = 弹详情卡，notify = 只发系统提醒，off = 都不弹；seconds = 自动卡停留秒数 */
+  popup: PopupSettings;
+  /** QQ OneBot 连接：enabled 后才去连本机桥接；url / token 留空时回退到环境变量与默认地址 */
+  qq: QQSettings;
   trade: TradeSettings;
 }
+
+export type PopupMode = "card" | "notify" | "off";
+export interface PopupSettings { mode: PopupMode; seconds: number }
+export interface QQSettings { enabled: boolean; url: string; token: string }
 
 export const DEFAULT_SETTINGS: Settings = {
   groups: [], // 首启没有群：dashboard「群组」页引导配好来源后再勾选
   feishuGroups: [],
+  qqGroups: [],
   panel: { width: 326, height: 592, backgroundOpacity: 1 },
+  popup: { mode: "card", seconds: 6 },
+  // 老用户按 README 设过 FOMOMO_ONEBOT_ENABLED=1：界面里还没存过 QQ 设置时沿用它，存过以后以界面为准
+  qq: { enabled: process.env.FOMOMO_ONEBOT_ENABLED === "1", url: "", token: "" },
   trade: {
     rpc: {},
     maxUsdPerTrade: 200,
@@ -464,6 +481,11 @@ export type OutEvent =
   | { t: "kline_bar"; address: string; chain: string; resolution: string; bar: [number, number, number, number, number, number] }
   /** 不在追踪列表里的「当前持仓」弹卡快照（与 `state` 里的 TokenView 同构，`holdingOnly=true`）：只对当前 focus 的持仓推，绝不进 `state` / 落库 */
   | { t: "token_detail"; token: TokenView }
+  /**
+   * 各来源已选群的监听异常汇总（变化时推）：Windows 悬浮窗底栏据此显示「飞书 N 个群异常」。
+   * 只列有群在异常的来源；全好时 items 为空
+   */
+  | { t: "source_health"; items: Array<{ source: "wechat" | "feishu" | "qq"; failing: number; error: string | null }> }
   /** 设置变更（Swift 只关心 panel 尺寸） */
   | { t: "settings"; settings: Settings }
   /** fomo.family 登录态（启动与变化时推）：只给信号半边（关注者 / Thesis / 前排）用，与交易无关 */
@@ -473,7 +495,7 @@ export type OutEvent =
    * firstRun = 这台机器第一次跑（没弹过引导且一个群都没选）。Swift 在 firstRun 或 configured=false 时自动打开
    * dashboard「群组」页，一进程只弹一次；详情（各来源的前置条件 / 登录进度）走 /api/sources
    */
-  | { t: "sources"; configured: boolean; firstRun: boolean; wechat: { ready: boolean }; feishu: { ready: boolean } }
+  | { t: "sources"; configured: boolean; firstRun: boolean; wechat: { ready: boolean }; feishu: { ready: boolean }; qq: { ready: boolean } }
   | TradeStateEvent
   | TradeQuoteEvent
   | TradeEvent

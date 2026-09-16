@@ -124,6 +124,35 @@ export interface Rendered {
   textual: boolean;
 }
 
+/**
+ * 转发机器人（把微信等群的聊天搬进飞书的应用）发的消息，真实发言人写在正文开头：
+ * 「昵称：\n」「昵称:\n」「【昵称】：\n」。只认应用发送的纯文本、且冒号后紧跟换行——真人写的「注意：…」不拆；
+ * 以「开头的是引用回复（源群行情机器人回的卡片），不猜名字
+ */
+const RELAY_PREFIX = /^(?:【([^】\n]{1,32})】|([^\n:：「」【】]{1,32}))[:：]\n/;
+
+function relayPrefix(m: RawMessage): { name: string; rest: string } | null {
+  if (m.sender?.sender_type !== "app" || m.msg_type !== "text" || m.deleted) return null;
+  let text: unknown;
+  try {
+    text = (JSON.parse(m.body?.content ?? "") as { text?: unknown }).text;
+  } catch {
+    return null;
+  }
+  if (typeof text !== "string") return null;
+  const r = RELAY_PREFIX.exec(text);
+  const name = (r?.[1] ?? r?.[2])?.trim();
+  return r && name ? { name, rest: text.slice(r[0].length) } : null;
+}
+
+/** 同一规则用于已入库的转发喊单（入库文本已把换行压成空格，所以冒号后要求空白）：返回真实发言人与去掉前缀的正文 */
+const RELAY_PREFIX_RENDERED = /^(?:【([^】]{1,32})】|([^:：「」【】\s][^:：「」【】]{0,31}?))\s*[:：]\s+/;
+export function relaySpeaker(rendered: string): { name: string; rest: string } | null {
+  const r = RELAY_PREFIX_RENDERED.exec(rendered);
+  const name = (r?.[1] ?? r?.[2])?.trim();
+  return r && name ? { name, rest: rendered.slice(r[0].length) } : null;
+}
+
 export function renderContent(m: RawMessage): Rendered {
   if (m.deleted) return { text: "[已撤回]", textual: false };
   const type = m.msg_type;
@@ -138,7 +167,7 @@ export function renderContent(m: RawMessage): Rendered {
   const out: string[] = [];
   const obj = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null; // JSON.parse 的对象分支，仅按 unknown 值读取
   if (type === "text") {
-    out.push(obj && typeof obj.text === "string" ? obj.text : raw);
+    out.push(relayPrefix(m)?.rest ?? (obj && typeof obj.text === "string" ? obj.text : raw));
   } else {
     walk(obj && type === "post" ? unwrapLocale(obj) : parsed, out, 0);
   }
@@ -150,14 +179,30 @@ export function renderContent(m: RawMessage): Rendered {
   return { text: text || (type === "interactive" ? "[卡片]" : ""), textual: true };
 }
 
-/** 发送者显示名：API with_sender_name 给的 name，没有就用原始 id（open_id / app_id） */
+/**
+ * 发送者显示名：转发机器人的消息取正文开头的真实发言人；其余用接口给的 sender_name（旧字段 name 兜底），没有就用原始 id。
+ * 应用发送、又没带发言人前缀的消息保持 app_id：应用的显示名常是占位（实测转发机器人就叫「1」），id 至少稳定可区分
+ */
 export function senderName(m: RawMessage): string {
-  return m.sender?.name?.trim() || m.sender?.id || "?";
+  const relay = relayPrefix(m);
+  if (relay) return relay.name;
+  if (m.sender?.sender_type === "app") return m.sender.id || "?";
+  return m.sender?.sender_name?.trim() || m.sender?.name?.trim() || m.sender?.id || "?";
+}
+
+/**
+ * 源群行情机器人的卡片（有人发地址，机器人引用它或直接回一张「实时 / 池塘 / 本群 / 查询人」卡）：不是喊单。
+ * 只看回复部分——开头的「引用」+ `- - - -` 分隔线去掉；真人引用一张卡再评论时卡片在引用里，照算喊单。
+ * 入参是 renderContent 之后的单行文本（入库文本同形，迁移复用）
+ */
+export function isBotCard(rendered: string): boolean {
+  const reply = rendered.replace(/^「[\s\S]*?」\s*-(?:\s*-){3,}\s*/, "");
+  return /实时[:：]/.test(reply) && /(?:池塘|本群|查询人)[:：]/.test(reply);
 }
 
 /** 复用微信的地址/链提取（baseType 1 = 纯文本路径，飞书这边已经把链接展开进文本） */
 export function extractFromMessage(m: RawMessage): Extracted & Rendered {
   const r = renderContent(m);
-  if (!r.textual) return { ...r, addrs: [], chainHint: null };
+  if (!r.textual || isBotCard(r.text)) return { ...r, addrs: [], chainHint: null };
   return { ...r, ...extractAddresses(r.text, 1) };
 }

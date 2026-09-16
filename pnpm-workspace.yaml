@@ -1,9 +1,15 @@
 # pnpm 11: 允许这些依赖运行安装脚本
 # better-sqlite3-multiple-ciphers 带预编译二进制，一般无需构建；列此以防某些环境走 prebuild-install。
 # esbuild 供 tsx 使用。
+# This repository is a single package; declaring an empty workspace keeps
+# tooling such as electron-builder's dependency collector cross-platform.
+packages: []
 allowBuilds:
   better-sqlite3-multiple-ciphers: true
   bufferutil: false
+  electron: true
+  electron-winstaller: false
   esbuild: true
+  koffi: true
   utf-8-validate: false
-  workerd: set this to true or false
+  workerd: false

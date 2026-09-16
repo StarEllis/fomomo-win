@@ -3,6 +3,7 @@ import path from "node:path";
 import Database from "better-sqlite3-multiple-ciphers";
 import type { Database as DB } from "better-sqlite3-multiple-ciphers";
 import { DATA_DIR } from "../config.js";
+import { isBotCard, relaySpeaker } from "../feishu/content.js";
 import { DEFAULT_SETTINGS, NATIVE_SYMBOLS, type Ath, type BuyPresets, type FomoActivity, type Links, type Market, type Mention, type Sample, type Settings, type TokenState, type TradeEvent, type TradeSettings, type Tweet, type TwitterUser } from "./types.js";
 import { thin } from "./engine.js";
 
@@ -19,6 +20,21 @@ function mergePresets(saved: unknown): TradeSettings["presets"] {
   }
   return { buy, sell: Array.isArray(s.sell) && s.sell.length ? [...(s.sell as number[])] : [...d.sell] };
 }
+
+/**
+ * 流动性在 (0, $1K) 之间时「价格 × 总量」算出的市值不可信（池子被抽干后可能算出上亿）：峰值不取这种采样、现市值按 0 计，也算归零。
+ * 流动性恰为 0 是内盘（pump.fun / flap / four.meme 联合曲线）没有池子，不是被抽干，当作没数据。
+ * K 线补的采样没有流动性：借它之后第一条有流动性的采样（没有就借之前最后一条）来判断；整个币都没有流动性数据时照常算
+ */
+const MIN_LIQ = 1000;
+const drained = (liq: number | null) => liq !== null && liq > 0 && liq < MIN_LIQ;
+const liveMc = (mc: number, liq: number | null) => (drained(liq) ? 0 : mc);
+const peakSince = (since: string) => `(SELECT MAX(s.mc) FROM samples s WHERE s.address = c.address AND s.ts >= ${since} AND COALESCE(NULLIF(s.liq, 0),
+  (SELECT n.liq FROM samples n WHERE n.address = s.address AND n.ts > s.ts AND n.liq > 0 ORDER BY n.ts LIMIT 1),
+  (SELECT n.liq FROM samples n WHERE n.address = s.address AND n.ts < s.ts AND n.liq > 0 ORDER BY n.ts DESC LIMIT 1), ${MIN_LIQ}) >= ${MIN_LIQ})`;
+/** 判定为貔貅的币不进 dashboard 统计（NOT_HONEYPOT 用于 JOIN 了 tokens t 的查询；LEFT JOIN 无代币行时 t.honeypot 为 NULL，照常计入） */
+const NOT_HONEYPOT = `COALESCE(t.honeypot, '') != 'honeypot'`;
+const CALL_NOT_HONEYPOT = `address NOT IN (SELECT address FROM tokens WHERE honeypot = 'honeypot')`;
 
 /**
  * 本地持久化（明文 sqlite，和微信加密库无关）：喊单记录 + 行情采样 + 代币快照 + 设置。
@@ -85,9 +101,76 @@ export class Store {
       CREATE INDEX IF NOT EXISTS trade_address ON trade(address, ts);
     `);
     // 老库补列（sqlite 没有 ADD COLUMN IF NOT EXISTS）
-    this.addColumns("tokens", { logo: "TEXT", links: "TEXT", ath: "TEXT", profile: "TEXT", official: "TEXT", tweets: "TEXT", tweets_at: "REAL", erc20_check: "TEXT" });
+    this.addColumns("tokens", { logo: "TEXT", links: "TEXT", ath: "TEXT", profile: "TEXT", official: "TEXT", tweets: "TEXT", tweets_at: "REAL", erc20_check: "TEXT", honeypot: "TEXT", honeypot_at: "REAL" });
     this.addColumns("calls", { grp: "TEXT" });
     this.migrateCallGroups();
+    this.migrateRelaySenders();
+    this.migrateBotCards();
+  }
+
+  /**
+   * 一次性：删掉旧版本记成喊单的行情机器人卡片（见 feishu/content.ts isBotCard），连同它的语境。
+   * 只动这次删过喊单的代币：一条喊单都不剩的整个清掉（面板不留空壳），还有的把首次喊单时间顺延到剩下最早那条
+   */
+  private migrateBotCards(): void {
+    if (this.db.prepare(`SELECT 1 FROM settings WHERE key='bot_card_v1'`).get()) return;
+    this.db.transaction(() => {
+      const rows = this.db.prepare(`SELECT id, address, sender, ts, grp, text FROM calls WHERE grp LIKE 'feishu:%'`).all() as Array<{ id: number; address: string; sender: string; ts: number; grp: string; text: string | null }>;
+      const dropCall = this.db.prepare(`DELETE FROM calls WHERE id=?`);
+      const dropCtx = this.db.prepare(`DELETE FROM call_context WHERE address=? AND sender=? AND ts=? AND grp=?`);
+      const touched = new Set<string>();
+      for (const r of rows) {
+        if (!isBotCard(r.text ?? "")) continue;
+        dropCall.run(r.id);
+        dropCtx.run(r.address, r.sender, r.ts, r.grp);
+        touched.add(r.address);
+      }
+      const first = this.db.prepare(`SELECT MIN(ts) t FROM calls WHERE address=?`);
+      const setFirst = this.db.prepare(`UPDATE tokens SET first_seen=? WHERE address=?`);
+      for (const a of touched) {
+        const t = (first.get(a) as { t: number | null }).t;
+        if (t != null) setFirst.run(t, a);
+        else for (const table of ["tokens", "samples", "call_context", "fomo_activity"]) this.db.prepare(`DELETE FROM ${table} WHERE address=?`).run(a);
+      }
+      this.db.prepare(`INSERT OR IGNORE INTO settings(key, value) VALUES('bot_card_v1', '1')`).run();
+    })();
+  }
+
+  /**
+   * 一次性：飞书转发机器人发的喊单，旧版本把发言人记成了应用 id（cli_…），真实发言人在正文开头（见 feishu/content.ts relaySpeaker）。
+   * 改成真实发言人并去掉前缀，语境（主键 + 每行）一起改；否则重启回灌同一条消息会因发言人不同被当成新喊单重复入库。
+   * 改名撞上已有的同一条（同地址 / 时刻 / 群 / 新发言人）就删掉旧行
+   */
+  private migrateRelaySenders(): void {
+    if (this.db.prepare(`SELECT 1 FROM settings WHERE key='relay_sender_v1'`).get()) return;
+    const renameLine = (l: { time: number; sender: string; text: string }) => {
+      const r = l.sender.startsWith("cli_") ? relaySpeaker(l.text) : null;
+      return r ? { ...l, sender: r.name, text: r.rest } : l;
+    };
+    this.db.transaction(() => {
+      const calls = this.db.prepare(`SELECT id, text FROM calls WHERE sender LIKE 'cli_%' AND grp LIKE 'feishu:%'`).all() as Array<{ id: number; text: string | null }>;
+      const setCall = this.db.prepare(`UPDATE OR IGNORE calls SET sender=?, text=? WHERE id=?`);
+      const dropCall = this.db.prepare(`DELETE FROM calls WHERE id=?`);
+      for (const c of calls) {
+        const r = relaySpeaker(c.text ?? "");
+        if (r && setCall.run(r.name, r.rest, c.id).changes === 0) dropCall.run(c.id);
+      }
+      const ctxs = this.db.prepare(`SELECT rowid, sender, lines, call FROM call_context WHERE grp LIKE 'feishu:%'`).all() as Array<{ rowid: number; sender: string; lines: string; call: number }>;
+      const setCtx = this.db.prepare(`UPDATE OR IGNORE call_context SET sender=?, lines=? WHERE rowid=?`);
+      const dropCtx = this.db.prepare(`DELETE FROM call_context WHERE rowid=?`);
+      for (const c of ctxs) {
+        let lines: Array<{ time: number; sender: string; text: string }>;
+        try {
+          lines = JSON.parse(c.lines);
+        } catch {
+          continue;
+        }
+        const next = lines.map(renameLine);
+        const sender = c.sender.startsWith("cli_") ? next[c.call]?.sender ?? c.sender : c.sender;
+        if (setCtx.run(sender, JSON.stringify(next), c.rowid).changes === 0) dropCtx.run(c.rowid);
+      }
+      this.db.prepare(`INSERT OR IGNORE INTO settings(key, value) VALUES('relay_sender_v1', '1')`).run();
+    })();
   }
 
   private addColumns(table: string, cols: Record<string, string>): void {
@@ -144,7 +227,10 @@ export class Store {
     return {
       groups: [...(saved.groups ?? DEFAULT_SETTINGS.groups)],
       feishuGroups: [...(saved.feishuGroups ?? DEFAULT_SETTINGS.feishuGroups)],
+      qqGroups: [...(saved.qqGroups ?? DEFAULT_SETTINGS.qqGroups)],
       panel: { ...DEFAULT_SETTINGS.panel, ...(saved.panel ?? {}) },
+      popup: { ...DEFAULT_SETTINGS.popup, ...(saved.popup ?? {}) },
+      qq: { ...DEFAULT_SETTINGS.qq, ...(saved.qq ?? {}) },
       trade: {
         rpc: { ...(saved.trade?.rpc ?? {}) },
         maxUsdPerTrade: saved.trade?.maxUsdPerTrade ?? DEFAULT_SETTINGS.trade.maxUsdPerTrade,
@@ -177,8 +263,8 @@ export class Store {
     this.db
       .prepare(
         `
-      INSERT INTO tokens(address, chain, symbol, name, logo, first_seen, price, mc, liq, holders, source, updated_at, links, ath, profile, official, tweets, tweets_at, erc20_check)
-      VALUES(@address, @chain, @symbol, @name, @logo, @first_seen, @price, @mc, @liq, @holders, @source, @updated_at, @links, @ath, @profile, @official, @tweets, @tweets_at, @erc20_check)
+      INSERT INTO tokens(address, chain, symbol, name, logo, first_seen, price, mc, liq, holders, source, updated_at, links, ath, profile, official, tweets, tweets_at, erc20_check, honeypot, honeypot_at)
+      VALUES(@address, @chain, @symbol, @name, @logo, @first_seen, @price, @mc, @liq, @holders, @source, @updated_at, @links, @ath, @profile, @official, @tweets, @tweets_at, @erc20_check, @honeypot, @honeypot_at)
       ON CONFLICT(address) DO UPDATE SET
         chain=COALESCE(excluded.chain, chain), symbol=COALESCE(excluded.symbol, symbol), name=COALESCE(excluded.name, name), logo=COALESCE(excluded.logo, logo),
         first_seen=MIN(first_seen, excluded.first_seen),
@@ -187,7 +273,8 @@ export class Store {
         updated_at=COALESCE(excluded.updated_at, updated_at),
         links=COALESCE(excluded.links, links), ath=COALESCE(excluded.ath, ath), profile=COALESCE(excluded.profile, profile), official=COALESCE(excluded.official, official),
         tweets=COALESCE(excluded.tweets, tweets), tweets_at=COALESCE(excluded.tweets_at, tweets_at),
-        erc20_check=excluded.erc20_check
+        erc20_check=excluded.erc20_check,
+        honeypot=COALESCE(excluded.honeypot, honeypot), honeypot_at=COALESCE(excluded.honeypot_at, honeypot_at)
     `,
       )
       .run({
@@ -211,6 +298,8 @@ export class Store {
         tweets_at: t.tweetsAt || null,
         // 不 COALESCE：行情到达后结论作废，要能把列清成 NULL
         erc20_check: t.erc20Check ? JSON.stringify(t.erc20Check) : null,
+        honeypot: t.honeypotCheck?.verdict ?? null,
+        honeypot_at: t.honeypotCheck?.checkedAt ?? null,
       });
   }
 
@@ -323,6 +412,15 @@ export class Store {
 
   /** 最近 limit 个代币（按首次喊单倒序）及其喊单、全跨度采样抽稀到 samplesPerToken */
   loadTokens(limit: number, samplesPerToken: number): TokenState[] {
+    return this.readTokens(`SELECT * FROM tokens ORDER BY first_seen DESC LIMIT ?`, limit, samplesPerToken);
+  }
+
+  /** 单个代币（含全部喊单）：追踪列表只留最近 MAX_TOKENS 个，更早的从 dashboard 点开时按需读 */
+  loadToken(address: string, samplesPerToken: number): TokenState | null {
+    return this.readTokens(`SELECT * FROM tokens WHERE address = ?`, address, samplesPerToken)[0] ?? null;
+  }
+
+  private readTokens(sql: string, arg: unknown, samplesPerToken: number): TokenState[] {
     type TokRow = {
       address: string;
       chain: string | null;
@@ -343,8 +441,10 @@ export class Store {
       tweets: string | null;
       tweets_at: number | null;
       erc20_check: string | null;
+      honeypot: string | null;
+      honeypot_at: number | null;
     };
-    const rows = this.db.prepare(`SELECT * FROM tokens ORDER BY first_seen DESC LIMIT ?`).all(limit) as TokRow[];
+    const rows = this.db.prepare(sql).all(arg) as TokRow[];
     const callStmt = this.db.prepare(`SELECT sender, ts, text, grp, price, mc, approx FROM calls WHERE address=? ORDER BY ts ASC`);
     const sampleStmt = this.db.prepare(`SELECT ts, price, mc FROM samples WHERE address=? ORDER BY ts ASC`);
     const parse = <T>(s: string | null): T | null => {
@@ -409,6 +509,7 @@ export class Store {
         tweets: parse<Tweet[]>(r.tweets) ?? [],
         tweetsAt: r.tweets_at ?? 0,
         erc20Check: market ? undefined : erc20Check(r.erc20_check),
+        honeypotCheck: (r.honeypot === "honeypot" || r.honeypot === "ok" || r.honeypot === "unknown") && r.honeypot_at !== null ? { verdict: r.honeypot, checkedAt: r.honeypot_at } : undefined,
       };
     });
   }
@@ -434,7 +535,7 @@ export class Store {
    * - 归零 = 当前 mc ≤ 基准 × zeroX（或当前流动性 < $1K）
    */
   private outcomes(opts: { group?: string; sinceTs?: number }) {
-    const where = ["c.price IS NOT NULL", "c.mc IS NOT NULL", "t.mc IS NOT NULL"];
+    const where = ["c.price IS NOT NULL", "c.mc IS NOT NULL", "t.mc IS NOT NULL", NOT_HONEYPOT];
     const args: unknown[] = [];
     if (opts.group) {
       where.push("c.grp = ?");
@@ -449,7 +550,7 @@ export class Store {
       .prepare(
         `
       SELECT c.sender, c.address, t.symbol, t.logo, t.chain, MIN(c.ts) ts, c.mc base_mc, t.mc now_mc, t.liq now_liq,
-             (SELECT MAX(s.mc) FROM samples s WHERE s.address = c.address AND s.ts >= MIN(c.ts)) peak_mc
+             ${peakSince("MIN(c.ts)")} peak_mc
       FROM calls c JOIN tokens t ON t.address = c.address
       WHERE ${where.join(" AND ")}
       GROUP BY c.sender, c.address
@@ -457,7 +558,7 @@ export class Store {
       )
       .all(...args) as Row[];
     return rows.map((r) => {
-      const nowX = r.now_mc / r.base_mc;
+      const nowX = liveMc(r.now_mc, r.now_liq) / r.base_mc;
       return { ...r, nowX, peakX: Math.max(nowX, (r.peak_mc ?? 0) / r.base_mc) };
     });
   }
@@ -472,7 +573,7 @@ export class Store {
       const { nowX, peakX } = r;
       s.calls++;
       if (peakX >= winX) s.wins++;
-      if (nowX <= zeroX || (r.now_liq !== null && r.now_liq < 1000)) s.zeros++;
+      if (nowX <= zeroX || drained(r.now_liq)) s.zeros++;
       s.mults.push(nowX);
       s.peaks.push(peakX);
       if (!s.best || peakX > s.best.x) s.best = { symbol: r.symbol ?? r.address.slice(0, 8), x: peakX };
@@ -501,7 +602,7 @@ export class Store {
    * 与 senderStats 同口径（基准 = 该人对该币首次喊单 mc）。
    */
   senderCalls(sender: string, opts: { group?: string; sinceTs?: number }) {
-    const where = ["c.sender = ?"];
+    const where = ["c.sender = ?", NOT_HONEYPOT];
     const args: unknown[] = [sender];
     if (opts.group) {
       where.push("c.grp = ?");
@@ -524,7 +625,7 @@ export class Store {
              COUNT(*) n,
              (SELECT mc FROM calls c2 WHERE c2.address = c.address AND c2.sender = c.sender ORDER BY c2.ts LIMIT 1) base_mc,
              t.mc now_mc, t.liq now_liq,
-             (SELECT MAX(s.mc) FROM samples s WHERE s.address = c.address AND s.ts >= MIN(c.ts)) peak_mc
+             ${peakSince("MIN(c.ts)")} peak_mc
       FROM calls c JOIN tokens t ON t.address = c.address
       WHERE ${where.join(" AND ")}
       GROUP BY c.address
@@ -533,7 +634,7 @@ export class Store {
       )
       .all(...args) as Row[];
     return rows.map((r) => {
-      const nowX = r.base_mc && r.now_mc ? r.now_mc / r.base_mc : null;
+      const nowX = r.base_mc && r.now_mc ? liveMc(r.now_mc, r.now_liq) / r.base_mc : null;
       const peakX = r.base_mc ? Math.max(nowX ?? 0, (r.peak_mc ?? 0) / r.base_mc) || null : null;
       return { ...r, nowX, peakX };
     });
@@ -546,18 +647,18 @@ export class Store {
   overview(): Overview {
     const now = Math.floor(Date.now() / 1000);
     const count = (sql: string, ...args: unknown[]) => (this.db.prepare(sql).get(...args) as { n: number }).n;
-    const calls24h = count(`SELECT COUNT(*) n FROM calls WHERE ts >= ?`, now - 86400);
-    const callsPrev24h = count(`SELECT COUNT(*) n FROM calls WHERE ts >= ? AND ts < ?`, now - 172800, now - 86400);
-    const tokens24h = count(`SELECT COUNT(*) n FROM tokens WHERE first_seen >= ?`, now - 86400);
-    const tokensPrev24h = count(`SELECT COUNT(*) n FROM tokens WHERE first_seen >= ? AND first_seen < ?`, now - 172800, now - 86400);
-    const senders24h = count(`SELECT COUNT(DISTINCT sender) n FROM calls WHERE ts >= ?`, now - 86400);
-    const totalCalls = count(`SELECT COUNT(*) n FROM calls`);
-    const totalTokens = count(`SELECT COUNT(*) n FROM tokens`);
-    const firstTs = (this.db.prepare(`SELECT MIN(ts) t FROM calls`).get() as { t: number | null }).t;
+    const calls24h = count(`SELECT COUNT(*) n FROM calls WHERE ts >= ? AND ${CALL_NOT_HONEYPOT}`, now - 86400);
+    const callsPrev24h = count(`SELECT COUNT(*) n FROM calls WHERE ts >= ? AND ts < ? AND ${CALL_NOT_HONEYPOT}`, now - 172800, now - 86400);
+    const tokens24h = count(`SELECT COUNT(*) n FROM tokens t WHERE first_seen >= ? AND ${NOT_HONEYPOT}`, now - 86400);
+    const tokensPrev24h = count(`SELECT COUNT(*) n FROM tokens t WHERE first_seen >= ? AND first_seen < ? AND ${NOT_HONEYPOT}`, now - 172800, now - 86400);
+    const senders24h = count(`SELECT COUNT(DISTINCT sender) n FROM calls WHERE ts >= ? AND ${CALL_NOT_HONEYPOT}`, now - 86400);
+    const totalCalls = count(`SELECT COUNT(*) n FROM calls WHERE ${CALL_NOT_HONEYPOT}`);
+    const totalTokens = count(`SELECT COUNT(*) n FROM tokens t WHERE ${NOT_HONEYPOT}`);
+    const firstTs = (this.db.prepare(`SELECT MIN(ts) t FROM calls WHERE ${CALL_NOT_HONEYPOT}`).get() as { t: number | null }).t;
 
     const bucket = (stepSec: number, n: number) => {
       const start = Math.floor(now / stepSec) * stepSec - (n - 1) * stepSec;
-      const rows = this.db.prepare(`SELECT CAST((ts - ?) / ? AS INTEGER) i, COUNT(*) n FROM calls WHERE ts >= ? GROUP BY i`).all(start, stepSec, start) as { i: number; n: number }[];
+      const rows = this.db.prepare(`SELECT CAST((ts - ?) / ? AS INTEGER) i, COUNT(*) n FROM calls WHERE ts >= ? AND ${CALL_NOT_HONEYPOT} GROUP BY i`).all(start, stepSec, start) as { i: number; n: number }[];
       const out = Array.from({ length: n }, (_, i) => ({ t: start + i * stepSec, n: 0 }));
       for (const r of rows) if (r.i >= 0 && r.i < n) out[r.i].n = r.n;
       return out;
@@ -567,20 +668,20 @@ export class Store {
 
     const all = this.outcomes({});
     const wins = all.filter((r) => r.peakX >= 1.5).length;
-    const zeros = all.filter((r) => r.nowX <= 0.1 || (r.now_liq !== null && r.now_liq < 1000)).length;
+    const zeros = all.filter((r) => r.nowX <= 0.1 || drained(r.now_liq)).length;
     const peaks = all.map((r) => r.peakX).sort((a, b) => a - b);
     const medianPeakX = peaks.length ? peaks[Math.floor(peaks.length / 2)] : 0;
-    const priced = totalCalls ? count(`SELECT COUNT(*) n FROM calls WHERE mc IS NOT NULL`) / totalCalls : 0;
+    const priced = totalCalls ? count(`SELECT COUNT(*) n FROM calls WHERE mc IS NOT NULL AND ${CALL_NOT_HONEYPOT}`) / totalCalls : 0;
 
-    type Recent = { sender: string; ts: number; address: string; symbol: string | null; logo: string | null; chain: string | null; call_mc: number | null; now_mc: number | null; grp: string | null };
+    type Recent = { sender: string; ts: number; address: string; symbol: string | null; logo: string | null; chain: string | null; call_mc: number | null; now_mc: number | null; now_liq: number | null; grp: string | null };
     const recent = (
       this.db
         .prepare(
-          `SELECT c.sender, c.ts, c.address, t.symbol, t.logo, t.chain, c.mc call_mc, t.mc now_mc, c.grp
-       FROM calls c JOIN tokens t ON t.address = c.address ORDER BY c.ts DESC LIMIT 8`,
+          `SELECT c.sender, c.ts, c.address, t.symbol, t.logo, t.chain, c.mc call_mc, t.mc now_mc, t.liq now_liq, c.grp
+       FROM calls c JOIN tokens t ON t.address = c.address WHERE ${NOT_HONEYPOT} ORDER BY c.ts DESC LIMIT 8`,
         )
         .all() as Recent[]
-    ).map((r) => ({ ...r, change: r.call_mc && r.now_mc ? (r.now_mc / r.call_mc - 1) * 100 : null }));
+    ).map(({ now_liq, ...r }) => ({ ...r, change: r.call_mc && r.now_mc ? (liveMc(r.now_mc, now_liq) / r.call_mc - 1) * 100 : null }));
 
     const bestByToken = new Map<string, (typeof all)[number]>();
     for (const r of all) {
@@ -592,7 +693,7 @@ export class Store {
       .slice(0, 5)
       .map((r) => ({ address: r.address, symbol: r.symbol, logo: r.logo, chain: r.chain, sender: r.sender, ts: r.ts, peakX: r.peakX, nowX: r.nowX }));
 
-    const chains = (this.db.prepare(`SELECT COALESCE(chain, '?') chain, COUNT(*) n FROM tokens GROUP BY chain ORDER BY n DESC`).all() as { chain: string; n: number }[]);
+    const chains = (this.db.prepare(`SELECT COALESCE(chain, '?') chain, COUNT(*) n FROM tokens t WHERE ${NOT_HONEYPOT} GROUP BY chain ORDER BY n DESC`).all() as { chain: string; n: number }[]);
 
     return {
       now, firstTs, totalCalls, totalTokens,
@@ -612,14 +713,14 @@ export class Store {
     const rows = this.db
       .prepare(
         `SELECT c.id, c.address, c.sender, c.ts, c.grp, c.approx, t.symbol, t.logo, t.chain, c.mc base_mc, t.mc now_mc, t.liq now_liq,
-                (SELECT MAX(s.mc) FROM samples s WHERE s.address = c.address AND s.ts >= c.ts) peak_mc
+                ${peakSince("c.ts")} peak_mc
          FROM calls c LEFT JOIN tokens t ON t.address = c.address
-         WHERE c.ts >= ? ORDER BY c.ts ASC`,
+         WHERE c.ts >= ? AND ${NOT_HONEYPOT} ORDER BY c.ts ASC`,
       )
       .all(sinceTs) as Row[];
     return rows.map((r) => {
       const priced = r.base_mc !== null && r.base_mc > 0 && r.now_mc !== null;
-      const nowX = priced ? r.now_mc! / r.base_mc! : null;
+      const nowX = priced ? liveMc(r.now_mc!, r.now_liq) / r.base_mc! : null;
       const peakX = priced ? Math.max(nowX!, (r.peak_mc ?? 0) / r.base_mc!) : null;
       return { id: r.id, address: r.address, sender: r.sender, ts: r.ts, group: r.grp, approx: r.approx === 1, symbol: r.symbol, logo: r.logo, chain: r.chain, baseMc: r.base_mc, nowMc: r.now_mc, nowLiq: r.now_liq, peakMc: r.peak_mc, nowX, peakX };
     });

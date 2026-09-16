@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>fomomo · 代币详情</title>
+  <style>
+    :root{color-scheme:dark;--bg:#111518;--surface:rgba(255,255,255,.045);--surface2:rgba(255,255,255,.07);--line:rgba(255,255,255,.085);--ink:#edf5f1;--muted:#91a19c;--faint:#60716c;--mint:#39d997;--mint2:#a4f4cc;--red:#ff6b69;--amber:#f0bb5c;--orange:#ff9f43;--blue:#1d9bf0}
+    *{box-sizing:border-box}[hidden]{display:none!important}
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);font-family:"Segoe UI Variable","Segoe UI",system-ui,sans-serif;color:var(--ink);font-size:13px}
+    button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;padding:0}button:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+    .num{font-family:"Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
+    .up{color:var(--mint)}.down{color:var(--red)}.dim{color:var(--faint)}.muted{color:var(--muted)}
+    .shell{height:100%;display:flex;flex-direction:column;background:radial-gradient(circle at 80% -20%,rgba(57,217,151,.07),transparent 34%),var(--bg);border:1px solid rgba(255,255,255,.13);border-radius:16px;overflow:hidden}
+    .bar{height:44px;flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:0 10px 0 14px;border-bottom:1px solid var(--line);-webkit-app-region:drag}
+    .bar .mark{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;background:var(--mint);color:#06281c;font-size:15px;font-weight:850}
+    .bar b{font-size:13px}.bar small{color:var(--muted);font-size:10.5px;margin-left:6px}
+    .bar .acts{margin-left:auto;display:flex;gap:4px;-webkit-app-region:no-drag}
+    .icon{width:28px;height:28px;border-radius:8px;color:var(--muted);font-size:16px}.icon:hover{background:var(--surface2);color:var(--ink)}
+    /* 布局：宽屏 左列 + 右侧三栏并排；中宽 右侧栏 + 两列叠在左列下；窄 整页单列滚动 */
+    .layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 300px 300px 300px;grid-template-areas:"main side gmgn thesis";grid-template-rows:minmax(0,1fr)}
+    .col{min-width:0;min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:#3d4d49 transparent}
+    .col::-webkit-scrollbar{width:7px}.col::-webkit-scrollbar-thumb{background:#3d4d49;border-radius:10px}
+    .main{grid-area:main}.side{grid-area:side}.gmgn{grid-area:gmgn}.thesis{grid-area:thesis}
+    .side,.gmgn,.thesis{border-left:1px solid var(--line)}
+    @media (max-width:1459px){.layout{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 300px;grid-template-areas:"main main side" "gmgn thesis side";grid-template-rows:minmax(0,1fr) minmax(180px,34%)}.gmgn{border-left:0}.gmgn,.thesis{border-top:1px solid var(--line)}}
+    @media (max-width:899px){.layout{display:block;overflow:auto}.col{overflow:visible}.side,.gmgn,.thesis{border-left:0;border-top:1px solid var(--line)}}
+    .sec{padding:12px 14px}.sec+.sec{border-top:1px solid var(--line)}
+    .col-head{display:flex;align-items:center;gap:6px;padding:12px 12px 8px;position:sticky;top:0;background:var(--bg);z-index:1}
+    .col-body{padding:0 12px 12px;display:flex;flex-direction:column;gap:8px}
+    .label{font-size:10px;font-weight:700;letter-spacing:.4px;color:var(--mint)}
+    .count{font-size:10px;color:var(--muted)}
+    /* 头部 */
+    .ident{display:flex;gap:10px;align-items:flex-start}
+    .logo{width:38px;height:38px;border-radius:11px;flex:0 0 auto;display:grid;place-items:center;background:#293a35;color:var(--mint2);font-size:13px;font-weight:800;overflow:hidden;position:relative}.logo img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+    .t1{display:flex;align-items:center;gap:6px;min-width:0}.t1 h1{font-size:16px;margin:0;font-weight:650;white-space:nowrap}.t1 .name{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .chain{font-size:9px;font-weight:750;line-height:16px;padding:0 5px;border-radius:5px;background:rgba(115,167,255,.14);color:#9abaff}
+    .badge-new{font-size:9px;font-weight:800;color:var(--mint);background:rgba(57,217,151,.12);padding:1px 5px;border-radius:9px}
+    .t2{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:4px}
+    .addr{font-size:10.5px;color:var(--muted);padding:2px 4px;border-radius:5px}.addr:hover{background:var(--surface2)}
+    .pill{font-size:10px;font-weight:650;padding:3px 7px;border-radius:6px;background:var(--surface);border:1px solid var(--line);color:var(--muted)}.pill:hover{color:var(--ink);background:var(--surface2)}.pill.accent{color:var(--mint);border-color:rgba(57,217,151,.35)}
+    .mcrow{display:flex;align-items:baseline;gap:8px;margin-top:9px}.mcrow .mc{font-size:17px}.mcrow .chg{font-size:11.5px}
+    .stats{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px}.stat label{display:block;font-size:9px;font-weight:650;letter-spacing:.4px;color:var(--faint)}.stat b{font-size:12px;font-weight:500;white-space:nowrap}
+    .deltas{display:flex;gap:12px;margin-top:6px;font-size:10px}.deltas span label{font-size:9px;font-weight:650;color:var(--faint);margin-right:3px}
+    .fr-hi{color:var(--red)}.fr-mid{color:var(--orange)}.fr-lo{color:var(--amber)}.fr-min{color:var(--muted)}.fr-none{color:var(--faint)}
+    /* K 线 */
+    .chart-top{display:flex;align-items:center;gap:2px;margin-bottom:6px}
+    .res{font-size:9.5px;font-family:"Cascadia Mono",Consolas,monospace;padding:3px 6px;border-radius:5px;color:var(--faint)}.res:hover{color:var(--ink)}.res.on{color:var(--mint);background:rgba(57,217,151,.14);font-weight:700}
+    .chart-top .hint{margin-left:auto;font-size:9px;color:rgba(96,113,108,.8)}
+    .chart{display:block;width:100%;height:clamp(220px,36vh,440px);border-radius:12px;background:rgba(255,255,255,.02)}
+    /* 群内喊单语境 */
+    .calls-head{display:flex;align-items:center;gap:6px;margin-bottom:6px;min-width:0}.calls-head .sub{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.calls-head .right{margin-left:auto;display:flex;gap:8px;font-size:9.5px;color:var(--faint);white-space:nowrap}
+    .cl{display:flex;align-items:flex-start;gap:8px;padding:3px 0;border-radius:6px;position:relative}
+    .cl.call{background:rgba(57,217,151,.08);padding:3px 8px}.cl.call::before{content:"";position:absolute;left:0;top:3px;bottom:3px;width:2px;border-radius:1px;background:var(--mint)}
+    .cl.pick{cursor:pointer}.cl.pick:hover{background:rgba(57,217,151,.14)}
+    .cl .who{font-size:11px;font-weight:650;white-space:nowrap;color:var(--muted)}.cl.call .who{color:var(--ink)}
+    .cl time{font-size:10px;color:var(--faint);white-space:nowrap}
+    .cl .txt{font-size:10.5px;color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cl.call .txt{color:rgba(237,245,241,.9);white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+    .av{display:inline-grid;place-items:center;border-radius:50%;flex:0 0 auto;color:#fff;font-weight:700;overflow:hidden;position:relative}.av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+    /* 右侧卡片 */
+    .note{font-size:10.5px;padding:8px;border-radius:10px;background:var(--surface);color:var(--muted)}.note.err{color:var(--red)}.note.warn{color:var(--orange)}.note.faint{color:var(--faint)}
+    .note button{color:var(--mint);font-weight:650}.note button:hover{text-decoration:underline}
+    .box{padding:8px;border-radius:10px;background:var(--surface);border:1px solid var(--line);font-size:10.5px}
+    a.box,.box.link{display:block;color:inherit;text-decoration:none;cursor:pointer;text-align:left;width:100%}.box.link:hover{background:var(--surface2)}
+    .row{display:flex;align-items:center;gap:6px;min-width:0}.row .nm{font-size:11px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.row .hd{font-size:9.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.row .end{margin-left:auto;display:flex;gap:6px;align-items:center;font-size:9.5px;color:var(--muted);white-space:nowrap}
+    .vf{color:var(--blue);font-size:10px}
+    .tag{font-size:8.5px;font-weight:800;padding:1px 4px;border-radius:9px;background:rgba(57,217,151,.12);color:var(--mint)}.tag.amber{background:rgba(240,187,92,.12);color:var(--amber)}.tag.red{background:rgba(255,107,105,.12);color:var(--red)}.tag.gray{background:rgba(255,255,255,.07);color:var(--muted)}
+    .body{margin:4px 0 0 28px;color:rgba(237,245,241,.9);white-space:pre-wrap;word-break:break-word;line-height:1.45}
+    .body.clamp{display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;overflow:hidden}
+    .expand{margin-left:22px;font-size:9.5px;font-weight:650;color:rgba(57,217,151,.85);padding:3px 6px;border-radius:5px}.expand:hover{background:var(--surface2)}
+    .foot{margin:4px 0 0 28px;display:flex;flex-wrap:wrap;gap:6px;font-size:9.5px;color:var(--muted)}.foot button{color:var(--muted)}.foot button:hover{color:var(--ink)}
+    .tw .meta{font-size:9.5px;color:var(--faint);margin-top:1px}.tw .text{margin-top:3px;white-space:pre-wrap;word-break:break-word;line-height:1.45;display:-webkit-box;-webkit-line-clamp:12;-webkit-box-orient:vertical;overflow:hidden}
+    .tw .tr{margin-top:5px;padding:5px 6px;border-radius:6px;background:rgba(255,255,255,.04);color:var(--muted);white-space:pre-wrap;word-break:break-word;line-height:1.45}
+    .tw .q{margin-top:6px;padding:7px;border:1px solid var(--line);border-radius:8px}
+    .tw-grid{display:grid;grid-template-columns:28px minmax(0,1fr);gap:8px}
+    .more{width:100%;padding:6px 0;border-radius:8px;background:var(--surface);border:1px solid var(--line);font-size:10px;font-weight:650;color:var(--muted)}.more:hover:not(:disabled){color:var(--mint2);background:var(--surface2)}.more:disabled{cursor:default;opacity:.6}
+    .tab{font-size:9px;padding:2px 6px;border-radius:5px;color:var(--muted)}.tab.on{color:var(--mint);background:rgba(57,217,151,.14);font-weight:800}
+    .open{font-size:9.5px;color:var(--muted);padding:2px 4px;border-radius:5px;margin-left:auto}.open:hover{background:var(--surface2);color:var(--ink)}
+    .spin{width:9px;height:9px;border:1.5px solid rgba(255,255,255,.2);border-top-color:var(--mint);border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+    .fomo-row .kind{font-size:9px;font-weight:800;padding:1px 5px;border-radius:9px}
+    .fomo-row .cmt{margin:3px 0 0 24px;font-size:10px;color:rgba(237,245,241,.85);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+    .empty-all{height:100%;display:grid;place-items:center;color:var(--faint);font-size:12px}
+    @media (prefers-reduced-motion:reduce){.spin{animation:none}}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="bar"><div class="mark">f</div><b id="bar-title">代币详情</b><small id="bar-sub"></small><div class="acts"><button class="icon" data-act="dash" title="打开统计面板">↗</button><button class="icon" data-act="close" title="关闭">×</button></div></header>
+    <div class="empty-all" id="placeholder">选择一个代币查看详情</div>
+    <main class="layout" id="layout" hidden>
+      <section class="col main">
+        <div class="sec" id="head"></div>
+        <div class="sec">
+          <div class="chart-top" id="res-bar"></div>
+          <canvas class="chart" id="chart"></canvas>
+        </div>
+        <div class="sec" id="calls"></div>
+      </section>
+      <aside class="col side"><div class="col-body" style="padding-top:12px" id="side"></div></aside>
+      <section class="col gmgn" id="gmgn"></section>
+      <section class="col thesis" id="thesis"></section>
+    </main>
+  </div>
+  <script src="ui.js"></script>
+  <script src="chart.js"></script>
+  <script>
+    const { esc, compact, pct, ago, clock, followers, joined, frontRankText, frontRankHelp, frontRankClass, chainOf, chainLabel, shortAddr, avatar } = window.fmt;
+    const $ = (s) => document.querySelector(s);
+    const TWITTER_MSG = { idle: "尚未请求", waiting_chain: "等待识别代币链", no_link: "资料里没有推特链接", unsupported: "暂不支持此类 X 链接 · 可点「打开」查看", loading: "加载中…", empty: "请求完成 · 暂无内容" };
+    const THESIS_ERR = { not_logged_in: "未登录 fomo", unsupported_chain: "fomo 不支持该链", chain_unknown: "链未定，行情到了再拉", fetch_failed: "拉取失败（fomo REST 退避 / 网络），稍后自动重试", schema: "fomo 响应格式不符，未显示" };
+
+    let token = null, auto = false, identity = "", gmgnReady = false;
+    let context = null, gmgnCalls = null, thesis = null, fomoLoggedIn = false;
+    let gmgnTab = "gmgn", xShown = 20;
+    const expanded = new Set();
+    const groupNames = {};
+    let resolution = "1m";
+    try { resolution = localStorage.getItem("chartResolution") || "1m"; } catch {}
+    if (!CandleChart.CHOICES.includes(resolution)) resolution = "1m";
+
+    const chart = new CandleChart($("#chart"), {
+      onRequest: (r) => token && window.fomomo.send({ t: "kline", address: token.address, chain: knownChain() , resolution: r.resolution, from: r.from, to: r.to }),
+      onCallTap: (c) => token && window.fomomo.send({ t: "context", address: token.address, sender: c.sender, ts: c.t, group: c.group }),
+    });
+    chart.resolution = resolution;
+
+    /** 卡上的链（同 Swift Token.knownChain）：新币自动弹卡时可能还未知 */
+    const knownChain = () => token?.market?.chain || token?.chainHint || null;
+    /** 事件守卫 = 地址 + 链：事件带链时必须等于卡上的已知链；卡链未知只比地址 */
+    const mine = (e) => token && e.address === token.address && (!e.chain || !knownChain() || e.chain === knownChain());
+
+    /** 只在内容变了时换 DOM：state 每次刷新都会重推 token，别把滚动位置 / 悬停打掉 */
+    function put(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; } }
+    const agoSpan = (ts, suffix = "") => `<span data-ago="${ts}" data-suffix="${esc(suffix)}">${ago(ts)}${esc(suffix)}</span>`;
+    const verified = (v) => v ? `<span class="vf" title="认证">✔</span>` : "";
+
+    function expandable(text, id, lines = 6) {
+      const s = String(text || "").trim();
+      const long = s.length > 140 || (s.match(/\n/g) || []).length >= lines;
+      const open = expanded.has(id);
+      return `<div class="body ${long && !open ? "clamp" : ""}">${esc(s)}</div>` + (long ? `<button class="expand" data-act="expand" data-id="${esc(id)}">${open ? "收起" : "展开全文"}</button>` : "");
+    }
+
+    // ---------- 头部：身份 / 链接 / 市值 / 统计 ----------
+    function renderHead() {
+      const t = token, m = t.market || {}, c = chainOf(t);
+      const sym = m.symbol || shortAddr(t.address);
+      const name = m.symbol ? (m.name || "") : (Date.now() / 1000 - t.firstSeen > 600 ? "未收录" : "加载中…");
+      const links = [];
+      if (t.links?.website) links.push([`官网`, t.links.website]);
+      if (t.links?.telegram) links.push([`TG`, t.links.telegram]);
+      if (t.fomoURL) links.push([`fomo`, t.fomoURL, true]);
+      links.push([`GMGN`, `https://gmgn.ai/${encodeURIComponent(c || "robinhood")}/token/${encodeURIComponent(t.address)}`]);
+      links.push([`DEX`, `https://dexscreener.com/search?q=${encodeURIComponent(t.address)}`]);
+      const f = t.fomo;
+      const buyers = !f ? "—" : f.holders != null ? `${f.buyers} / ${f.holders}` : `${f.buyers} 人`;
+      const ch = t.change, chCls = ch == null ? "dim" : ch >= 0 ? "up" : "down";
+      const delta = (label, v) => `<span><label>${label}</label><span class="num ${v == null ? "dim" : v >= 0 ? "up" : "down"}">${pct(v)}</span></span>`;
+      put($("#head"), `
+        <div class="ident">
+          <div class="logo">${esc(sym.slice(0, 2))}${m.logo ? `<img src="${esc(m.logo)}" alt="" onerror="this.remove()"/>` : ""}</div>
+          <div style="min-width:0;flex:1">
+            <div class="t1"><h1>${esc(sym)}</h1><span class="chain">${esc(chainLabel(c))}</span><span class="name">${esc(name)}</span>${auto ? `<span class="badge-new">新</span>` : ""}</div>
+            <div class="t2"><button class="addr num" data-act="copy" title="${esc(t.address)}">${esc(shortAddr(t.address))} <span id="copied">⧉</span></button>${links.map(([l, u, a]) => `<button class="pill ${a ? "accent" : ""}" data-act="url" data-url="${esc(u)}" title="${esc(u)}">${l}</button>`).join("")}</div>
+          </div>
+        </div>
+        <div class="mcrow"><span class="mc num">${compact(m.mc)}</span><span class="chg num ${chCls}">喊后 ${pct(ch, t.changeApprox)}</span></div>
+        <div class="stats">
+          <div class="stat"><label>喊单 MC</label><b class="num">${compact(t.mentions?.[0]?.mc)}</b></div>
+          <div class="stat"><label>流动性</label><b class="num">${compact(m.liq)}</b></div>
+          <div class="stat"><label>持有</label><b class="num">${m.holders != null ? Math.round(m.holders).toLocaleString() : "—"}</b></div>
+          <div class="stat"><label>KOL</label><b class="num up">${t.kol || 0} 人</b></div>
+          <div class="stat" title="${f?.holders == null ? "fomo 关注者里买过这个币的人数" : "fomo 关注者里买过的人数 / 目前仍持有的人数"}"><label>fomo 买入</label><b class="num">${buyers}</b></div>
+          ${f ? `<div class="stat" title="${esc(frontRankHelp(f.frontRank))}"><label>fomo 前排</label><b class="num ${frontRankClass(f.frontRank?.ratio)}">${frontRankText(f.frontRank)}</b></div>` : ""}
+          ${t.ath ? `<div class="stat"><label>ATH</label><b class="num">${compact(t.ath.mc)}</b></div>` : ""}
+        </div>
+        <div class="deltas">${delta("5m", m.change5m)}${delta("1h", m.change1h)}${delta("24h", m.change24h)}</div>`);
+      $("#bar-title").textContent = sym;
+      $("#bar-sub").textContent = `${chainLabel(c)} · ${t.live ? "实时行情" : "定时采样"}`;
+    }
+
+    function renderResBar() {
+      put($("#res-bar"), CandleChart.CHOICES.map((r) => `<button class="res ${r === resolution ? "on" : ""}" data-act="res" data-r="${r}">${r}</button>`).join("") + `<span class="hint">滚轮缩放 · 拖动平移 · 双击复位</span>`);
+    }
+
+    // ---------- 群内喊单：首次喊单前后的群聊原文，喊单那条高亮；语境没到时退回列最近 4 次喊单 ----------
+    function renderCalls() {
+      const t = token, ms = t.mentions || [];
+      const ctx = context && context.address === t.address ? context : null;
+      const idx = ctx ? ms.findIndex((m) => m.time === ctx.ts && m.sender === ctx.sender && m.group === ctx.group) : -1;
+      const line = (l, isCall, pick) => `<div class="cl ${isCall ? "call" : ""} ${pick != null ? "pick" : ""}" ${pick != null ? `data-act="ctx" data-i="${pick}" title="查看这次喊单的群聊语境"` : ""}>${avatar(null, l.sender, 16)}<span class="who">${esc(l.sender)}</span><time class="num">${clock(l.time)}</time><span class="txt">${esc(String(l.text).toLowerCase() === t.address ? shortAddr(t.address) : l.text)}</span></div>`;
+      let body;
+      if (ctx && ctx.lines?.length) body = ctx.lines.map((l, i) => line(l, i === ctx.call, null)).join("");
+      else body = ms.slice(-4).reverse().map((m) => line({ time: m.time, sender: m.sender, text: m.text }, true, ms.indexOf(m))).join("") || `<div class="note faint">还没有群内喊单记录</div>`;
+      put($("#calls"), `
+        <div class="calls-head"><span class="label">群内喊单</span><span class="count num">${ms.length} 次 · ${t.kol || 0} 人</span>
+          ${idx >= 0 ? `<span class="sub">· 第 ${idx + 1} 次 ${esc(ctx.sender)} ${agoSpan(ctx.ts, "前")}</span>` : ""}
+          <span class="right">${ms.length > 1 ? "点 K 线上的标记看其他喊单" : ""}${ctx && groupNames[ctx.group] ? `<span>${esc(groupNames[ctx.group])}</span>` : ""}</span></div>
+        ${body}`);
+      chart.setSelectedCall(ctx ? { t: ctx.ts, sender: ctx.sender, group: ctx.group } : null);
+    }
+
+    // ---------- 右栏：官方推特 → fomo 关注者 ----------
+    function tweetBox(tw) {
+      const u = tw.user || {};
+      const meta = [u.followers > 0 ? followers(u.followers) : null, tw.time > 0 ? ago(tw.time) : null, tw.likes != null ? `♥ ${tw.likes}` : null].filter(Boolean).join(" · ");
+      const q = tw.quoted;
+      return `<button class="box link tw" data-act="url" data-url="${esc(tw.url)}"><div class="tw-grid">${avatar(u.avatar, u.name || u.screen, 28)}<div style="min-width:0">
+        <div class="row"><span class="nm">${esc(u.name)}</span>${verified(u.verified)}<span class="hd num">@${esc(u.screen)}</span></div>
+        <div class="meta num">${esc(meta)}</div>
+        <div class="text">${esc(String(tw.text || "").trim())}</div>
+        ${tw.translation ? `<div class="tr">${esc(tw.translation.trim())}</div>` : ""}
+        ${q ? `<div class="q"><div class="row">${avatar(q.user?.avatar, q.user?.name, 16)}<span class="nm" style="font-size:10.5px">${esc(q.user?.name)}</span>${verified(q.user?.verified)}<span class="hd num">@${esc(q.user?.screen)}</span>${q.time > 0 ? `<span class="hd">· ${ago(q.time)}</span>` : ""}</div><div class="text">${esc(String(q.text || "").trim())}</div>${q.translation ? `<div class="tr">${esc(q.translation.trim())}</div>` : ""}</div>` : ""}
+      </div></div></button>`;
+    }
+
+    function profileCard(p) {
+      const meta = [p.followers > 0 ? followers(p.followers) : null, p.joined ? joined(p.joined) : null].filter(Boolean).join(" · ");
+      return `<button class="box link" data-act="url" data-url="https://x.com/${esc(encodeURIComponent(p.screen))}"><div class="tw-grid">${avatar(p.avatar, p.name, 28)}<div style="min-width:0">
+        <div class="row"><span class="nm">${esc(p.name)}</span>${verified(p.verified)}<span class="hd num">@${esc(p.screen)}</span></div>
+        ${meta ? `<div class="tw"><div class="meta num">${esc(meta)}</div></div>` : ""}
+        ${p.bio ? `<div style="margin-top:3px;color:rgba(237,245,241,.85);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(p.bio)}</div>` : ""}
+      </div></div></button>`;
+    }
+
+    function renderSide() {
+      const t = token;
+      const linked = t.links?.twitter?.includes("/status/") ? t.official?.[0] : null;
+      const req = t.twitterRequest || { status: "idle" };
+      const msg = req.status === "error" ? `请求失败 · ${req.error || "未知错误"}` : TWITTER_MSG[req.status];
+      let tw = `<div class="row"><span style="font-weight:800;font-size:11px">𝕏</span><span class="label">官方推特</span>${t.links?.twitter ? `<button class="open" data-act="url" data-url="${esc(t.links.twitter)}">打开 ↗</button>` : ""}</div>`;
+      if (linked) tw += tweetBox(linked); else if (t.profile) tw += profileCard(t.profile);
+      if (msg) tw += `<div class="note ${req.status === "error" ? "warn" : "faint"}">${esc(msg)}</div>`;
+
+      const f = t.fomo;
+      let fo = `<div class="row" style="margin-top:6px;padding-top:10px;border-top:1px solid var(--line)"><span class="label">fomo 关注者</span>${f?.activity?.length ? `<span class="count num">${f.activity.length} 条</span>` : ""}</div>`;
+      if (!fomoLoggedIn) fo += `<div class="note">未登录 fomo · <button data-act="fomo-login">登录 fomo</button></div>`;
+      else if (!f) fo += `<div class="note faint">fomo 暂无此链数据</div>`;
+      else if (!f.activity?.length) fo += `<div class="note faint">还没有关注者动作</div>`;
+      else fo += f.activity.map((a) => {
+        const [label, cls] = a.kind === "buy" ? ["买入", ""] : a.kind === "sell" ? ["卖出", "red"] : ["Thesis", "gray"];
+        return `<div class="fomo-row"><div class="row">${avatar(a.avatar, a.handle, 18)}<span class="nm">${esc(a.handle)}</span><span class="tag ${cls}">${label}</span><span class="end num">${a.usd != null ? `<span style="color:var(--ink)">${compact(a.usd)}</span>` : ""}${a.mc != null ? `<span class="dim">@ ${compact(a.mc)}</span>` : ""}<span class="dim">${agoSpan(a.ts)}</span></span></div>${a.comment?.trim() ? `<div class="cmt">${esc(a.comment.trim())}</div>` : ""}</div>`;
+      }).join("");
+      put($("#side"), tw + fo);
+    }
+
+    // ---------- GMGN 喊单（GMGN / X 两页签） ----------
+    function renderGmgn() {
+      const c = gmgnCalls && mine(gmgnCalls) ? gmgnCalls : null;
+      let head = `<span class="label">GMGN 喊单</span><button class="tab ${gmgnTab === "gmgn" ? "on" : ""}" data-act="tab" data-tab="gmgn">GMGN</button><button class="tab ${gmgnTab === "x" ? "on" : ""}" data-act="tab" data-tab="x">X</button><span style="flex:1"></span>`;
+      if (c) {
+        if (gmgnTab === "gmgn" && c.items.length) head += `<span class="count num">${c.items.length} 条${c.hasNext ? "+" : ""}</span>`;
+        if (gmgnTab === "x" && c.tweets.length) head += `<span class="count num">${c.tweets.length} 条</span>`;
+        if (gmgnTab === "gmgn" ? c.loading : c.tweetsLoading) head += `<span class="spin"></span>`;
+      }
+      let body = "";
+      if (!c) body = `<div class="note">加载中…</div>`;
+      else if (gmgnTab === "gmgn") {
+        if (!c.items.length) body = c.error === "chain_unknown" ? `<div class="note">链未定，行情到了再拉</div>` : c.error ? `<div class="note err">拉取失败 · ${esc(c.error)}</div>` : c.loading ? `<div class="note">加载中…</div>` : `<div class="note">gmgn 上还没有人喊这个币</div>`;
+        else {
+          if (c.error) body += `<div class="note err">刷新失败 · ${esc(c.error)}（下面是上次结果）</div>`;
+          body += c.items.map((i) => `<div class="box">
+            <div class="row">${avatar(i.avatar, i.handle || i.name, 22)}<button class="row" style="min-width:0" data-act="url" data-url="${esc(i.url || "")}" ${i.url ? "" : "disabled"}><span class="nm">${esc(i.name)}</span>${verified(i.verified)}${i.kol ? `<span class="tag">KOL</span>` : ""}${i.handle && i.handle !== i.name ? `<span class="hd num">@${esc(i.handle)}</span>` : ""}</button>
+              ${i.multiplier != null ? `<span class="end num ${i.multiplier >= 1 ? "up" : "down"}" title="喊单后市值倍数（gmgn multiplier）">${i.multiplier >= 10 ? i.multiplier.toFixed(0) : i.multiplier.toFixed(2)}x</span>` : ""}</div>
+            ${i.replyTo ? `<div class="foot">喊回 ↩</div>` : ""}
+            ${i.text ? expandable(i.text, "g:" + i.id) : ""}
+            <div class="foot num">${i.followers > 0 ? `<span>${followers(i.followers)}</span>` : ""}${agoSpan(i.ts)}${i.likes > 0 ? `<span>♥ ${i.likes}</span>` : ""}${i.replies > 0 ? `<span>💬 ${i.replies}</span>` : ""}${i.image ? `<button data-act="url" data-url="${esc(i.image)}">附图 ↗</button>` : ""}</div>
+          </div>`).join("");
+          if (c.hasNext) body += `<button class="more" data-act="gmgn-more" ${c.loading ? "disabled" : ""}>${c.loading ? "加载中…" : "加载更多"}</button>`;
+        }
+      } else {
+        if (!c.tweetsAt) body = c.tweetsError && !c.tweetsLoading ? `<div class="note err">拉取失败 · ${esc(c.tweetsError)}</div>` : `<div class="note">加载中…</div>`;
+        else if (!c.tweets.length) body = `<div class="note">gmgn 没搜到提到这个币的 X 帖</div>`;
+        else {
+          if (c.tweetsError) body += `<div class="note err">刷新失败 · ${esc(c.tweetsError)}（下面是上次结果）</div>`;
+          body += c.tweets.slice(0, xShown).map(tweetBox).join("");
+          if (c.tweets.length > xShown) body += `<button class="more" data-act="x-more">加载更多</button>`;
+        }
+      }
+      put($("#gmgn"), `<div class="col-head">${head}</div><div class="col-body">${body}</div>`);
+    }
+
+    // ---------- fomo Thesis（全站，不限关注者） ----------
+    function renderThesis() {
+      const f = thesis && mine(thesis) ? thesis : null;
+      let head = `<span class="label">fomo Thesis</span><span class="count">全站</span><span style="flex:1"></span>`;
+      if (f?.items.length) head += `<span class="count num">${f.count != null && f.count > f.items.length ? `${f.items.length} / ${f.count}` : f.items.length} 条</span>`;
+      if (f?.loading) head += `<span class="spin"></span>`;
+      if (token.fomoURL) head += `<button class="open" style="margin-left:0" data-act="url" data-url="${esc(token.fomoURL)}">打开 ↗</button>`;
+      let body = "";
+      const login = `<div class="note">未登录 fomo · <button data-act="fomo-login">登录 fomo</button></div>`;
+      if (!fomoLoggedIn) body = login;
+      else if (!f) body = `<div class="note">加载中…</div>`;
+      else if (!f.items.length) {
+        if (f.error === "not_logged_in") body = login;
+        else if (f.error) body = `<div class="note ${f.error === "fetch_failed" || f.error === "schema" ? "err" : ""}">${esc(THESIS_ERR[f.error] || "拉取失败 · " + f.error)}</div>`;
+        else body = `<div class="note">${f.loading ? "加载中…" : "还没有人写 Thesis"}</div>`;
+      } else {
+        if (f.error) body += `<div class="note err">刷新失败 · ${esc(THESIS_ERR[f.error] || f.error)}（下面是上次结果）</div>`;
+        body += f.items.map((th) => `<div class="box">
+          <div class="row">${avatar(th.avatar, th.handle, 22)}<span class="nm">${esc(th.name)}</span>${verified(th.verified)}${th.isDev ? `<span class="tag amber">dev</span>` : ""}${th.name !== th.handle ? `<span class="hd num">@${esc(th.handle)}</span>` : ""}<span class="end num">${agoSpan(th.ts)}</span></div>
+          ${expandable(th.comment, "t:" + th.id)}
+          <div class="foot num">${th.likes > 0 ? `<span>♥ ${th.likes}</span>` : ""}${th.replies > 0 ? `<span>💬 ${th.replies}</span>` : ""}${th.position ? `<span>持仓 ${compact(th.position.usd)}</span>${th.position.unrealizedPct != null ? `<span class="${th.position.unrealizedPct >= 0 ? "up" : "down"}">${th.position.unrealizedPct >= 0 ? "+" : ""}${th.position.unrealizedPct.toFixed(1)}%</span>` : ""}` : ""}</div>
+        </div>`).join("");
+        if (f.hasNext) body += `<button class="more" data-act="thesis-more" ${f.loading ? "disabled" : ""}>${f.loading ? "加载中…" : "加载更多"}</button>`;
+      }
+      put($("#thesis"), `<div class="col-head">${head}</div><div class="col-body">${body}</div>`);
+    }
+
+    function renderAll() {
+      if (!token) return;
+      $("#placeholder").hidden = true;
+      $("#layout").hidden = false;
+      renderHead(); renderResBar(); renderCalls(); renderSide(); renderGmgn(); renderThesis();
+    }
+
+    /** 切币（或链从未知变已知 = 身份变了）：清掉上一个币的列与图，重新拉 */
+    function select(next, isAuto) {
+      const id = `${next.market?.chain || next.chainHint || "?"}:${next.address}`;
+      const sameToken = token && token.address === next.address;
+      token = next;
+      auto = !!isAuto;
+      if (id !== identity) {
+        identity = id;
+        if (!sameToken) { context = null; gmgnCalls = null; thesis = null; gmgnTab = "gmgn"; xShown = 20; expanded.clear(); for (const s of document.querySelectorAll(".col")) s.scrollTop = 0; }
+        chart.reset(next.firstSeen);
+      }
+      renderAll();
+    }
+
+    function onEvent(e) {
+      if (e.t === "detail_selected" && e.token) select(e.token, e.auto);
+      else if (e.t === "detail_pinned") { auto = false; if (token) renderHead(); }
+      else if (e.t === "fomo_state") { fomoLoggedIn = !!e.loggedIn; if (token) { renderSide(); renderThesis(); } }
+      else if (e.t === "ready" && Array.isArray(e.groups)) { for (const g of e.groups) if (g.username) groupNames[g.username] = g.displayName; if (token) renderCalls(); }
+      else if (e.t === "bridge_status" && e.bridge === "gmgn") {
+        // gmgn 页面刚就绪：之前因「gmgn not ready」失败的 K 线 / GMGN 喊单立刻重拉（否则 K 线要等时间窗前进一根才重试）
+        const wasReady = gmgnReady;
+        gmgnReady = e.state === "ready";
+        if (gmgnReady && !wasReady && token) { chart.last = null; chart.request(); window.fomomo.send({ t: "focus", address: token.address, chain: knownChain() }); }
+      }
+      if (!token) return;
+      if (e.t === "kline" && mine(e)) chart.setKline(e);
+      else if (e.t === "kline_bar" && mine(e)) chart.mergeBar(e.resolution, e.bar);
+      else if (e.t === "context" && e.address === token.address) { context = e; renderCalls(); }
+      else if (e.t === "gmgn_calls" && mine(e)) { gmgnCalls = e; renderGmgn(); }
+      else if (e.t === "fomo_thesis" && mine(e)) { thesis = e; renderThesis(); }
+    }
+
+    document.addEventListener("pointerdown", () => { if (auto) window.fomomo.pinDetail(); }, true);
+    document.addEventListener("click", async (ev) => {
+      const el = ev.target.closest("[data-act]");
+      if (!el || el.disabled) return;
+      const act = el.dataset.act;
+      if (act === "close") window.fomomo.closeDetail();
+      else if (act === "dash") window.fomomo.openDashboard("overview");
+      else if (act === "url") { if (el.dataset.url) window.fomomo.openExternal(el.dataset.url); }
+      else if (act === "fomo-login") window.fomomo.openFomo();
+      else if (!token) return;
+      else if (act === "copy") { try { await navigator.clipboard.writeText(token.address); const c = $("#copied"); c.textContent = "✓"; setTimeout(() => { c.textContent = "⧉"; }, 1200); } catch {} }
+      else if (act === "res") { resolution = el.dataset.r; try { localStorage.setItem("chartResolution", resolution); } catch {} chart.setResolution(resolution); renderResBar(); }
+      else if (act === "ctx") { const m = token.mentions?.[Number(el.dataset.i)]; if (m) window.fomomo.send({ t: "context", address: token.address, sender: m.sender, ts: m.time, group: m.group }); }
+      else if (act === "tab") { gmgnTab = el.dataset.tab; renderGmgn(); }
+      else if (act === "x-more") { xShown += 20; renderGmgn(); }
+      else if (act === "gmgn-more") window.fomomo.send({ t: "gmgn_calls_more", address: token.address });
+      else if (act === "thesis-more") window.fomomo.send({ t: "fomo_thesis_more", address: token.address });
+      else if (act === "expand") { const id = el.dataset.id; if (expanded.has(id)) expanded.delete(id); else expanded.add(id); renderGmgn(); renderThesis(); }
+    });
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !ev.defaultPrevented) window.fomomo.closeDetail(); });
+    // 「N 分钟前」每 5s 跳一次，不整块重绘
+    setInterval(() => { for (const s of document.querySelectorAll("[data-ago]")) s.textContent = ago(Number(s.dataset.ago)) + (s.dataset.suffix || ""); }, 5000);
+
+    window.fomomo.onEvent(onEvent);
+    window.fomomo.bootstrap().then((b) => {
+      gmgnReady = b?.gmgn?.state === "ready";
+      for (const e of Object.values(b?.events || {})) onEvent(e);
+      if (b?.selected && !token) select(b.selected, b.selectedAuto);
+    });
+  </script>
+</body>
+</html>

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "本地读取微信指定群组消息（macOS）。密钥由 wcdb-key-tool 一次性提取，查询与解密全部在 TS 内完成。",
+  "description": "本地聚合飞书群组喊单与行情的桌面面板（Windows / macOS）。",
   "engines": {
     "node": ">=22"
   },
@@ -14,7 +14,9 @@
     "fake-swift": "node test/fake-swift.mjs node /tmp/fomomo_test.sqlite",
     "typecheck": "tsc --noEmit",
     "selftest": "node --import tsx test/selftest.ts",
-    "test": "for f in test/*.test.ts; do node --import tsx \"$f\" || exit 1; done",
+    "test": "node test/run-tests.mjs",
+    "windows:dev": "electron windows/main.cjs",
+    "windows:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
     "build:sidecar": "bash scripts/build-app.sh --sidecar-only",
     "build:app": "bash scripts/build-app.sh",
     "release": "bash scripts/release.sh"
@@ -26,14 +28,46 @@
     "fzstd": "^0.1.1",
     "viem": "^2.56.3",
     "wreq-js": "3.2.0",
+    "koffi": "^2.9.0",
     "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/ws": "^8.18.1",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "build": {
+    "appId": "com.nishuzumi.fomomo",
+    "productName": "fomomo",
+    "asar": true,
+    "directories": { "app": "dist/windows-app", "output": "dist/windows" },
+    "files": ["windows/**/*", "package.json", "!node_modules/**"],
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "buildDependenciesFromSource": false,
+    "extraResources": [
+      { "from": "dist/windows-sidecar", "to": "sidecar", "filter": ["**/*"] },
+      { "from": "dist/windows-node", "to": "node" },
+      { "from": "dist/windows-lark", "to": "bin" }
+      ,{ "from": "dist/windows-wechat-key", "to": "wechat-key" }
+    ],
+    "win": {
+      "icon": "windows/assets/icon.ico",
+      "target": [{ "target": "zip", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "fomomo",
+      "artifactName": "fomomo-${version}-win-x64-setup.${ext}"
+    }
   },
   "packageManager": "pnpm@11.10.0"
 }

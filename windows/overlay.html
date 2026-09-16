@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>fomomo</title>
+  <style>
+    :root{color-scheme:dark;--a:1;--line:rgba(255,255,255,.08);--ink:#edf5f1;--muted:#8d9c98;--faint:#5b6866;--mint:#39d997;--mint2:#9af4c9;--red:#ff6b69;--amber:#f0bb5c;--orange:#ff9f43}
+    *{box-sizing:border-box}[hidden]{display:none!important}
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:"Segoe UI Variable","Segoe UI",system-ui,sans-serif;color:var(--ink);font-size:13px}
+    button,input{font:inherit;color:inherit}button{border:0;cursor:pointer;background:none;padding:0}button:focus-visible,input:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+    .num{font-family:"Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
+    /* 背景不透明度（dashboard 设置）只作用于底色与描边，文字始终不透明 */
+    .shell{height:100%;display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(24,32,34,var(--a)) 0%,rgba(20,25,27,var(--a)) 70%);border:1px solid rgba(255,255,255,calc(.12 * max(var(--a),.35)));border-radius:18px;overflow:hidden}
+    header{height:62px;flex:0 0 auto;display:flex;align-items:center;padding:0 13px 0 15px;gap:10px;border-bottom:1px solid var(--line);-webkit-app-region:drag}
+    .no-drag{-webkit-app-region:no-drag}
+    .brand{display:flex;align-items:center;gap:9px;min-width:0}.brand-mark{width:29px;height:29px;border-radius:9px;background:linear-gradient(135deg,#39d997,#1f9e6a);display:grid;place-items:center;color:#07261b;font-weight:850;font-size:17px;flex:0 0 auto}
+    .brand-text{min-width:0}.brand-text b{display:block;font-size:15px}.brand-text span{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+    .dot{width:6px;height:6px;border-radius:50%;background:var(--amber);flex:0 0 auto}.dot.ok{background:var(--mint)}.dot.bad{background:var(--red)}
+    .head-actions{margin-left:auto;display:flex;gap:4px}.icon-btn{width:28px;height:28px;border-radius:8px;color:var(--muted);display:grid;place-items:center;font-size:15px}.icon-btn:hover{background:rgba(255,255,255,.08);color:var(--ink)}
+    .toolbar{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line)}
+    .search{height:29px;display:flex;align-items:center;gap:7px;flex:1;background:rgba(255,255,255,.055);border-radius:8px;padding:0 9px;color:var(--faint)}.search svg{width:12px;height:12px;flex:0 0 auto}.search input{min-width:0;flex:1;border:0;outline:0;background:none;color:var(--ink);font-size:11.5px}.search input::placeholder{color:var(--faint)}.search .cnt{font-size:9.5px;color:var(--muted)}.search .clr{color:var(--muted);font-size:12px}
+    .sort{height:29px;border-radius:8px;padding:0 9px;background:rgba(255,255,255,.055);color:var(--muted);font-size:11px}.sort:hover{color:var(--mint2)}
+    .cols{display:flex;align-items:center;padding:6px 14px;font-size:9px;font-weight:650;letter-spacing:.6px;color:var(--faint);border-bottom:1px solid var(--line)}.cols span:first-child{flex:1}.cols .c2{width:60px;text-align:center}.cols .c3{width:72px;text-align:right}
+    .list{flex:1;overflow:auto;padding:6px;scrollbar-width:thin;scrollbar-color:#40504c transparent}.list::-webkit-scrollbar{width:7px}.list::-webkit-scrollbar-thumb{background:#3a4946;border-radius:10px}
+    .row{display:grid;grid-template-columns:32px minmax(0,1fr) 60px 72px;gap:9px;align-items:center;padding:8px;margin-bottom:3px;border:1px solid transparent;border-radius:12px;cursor:pointer;transition:background .16s,border-color .16s}
+    .row:hover{background:rgba(255,255,255,.06)}.row.fresh{background:rgba(57,217,151,.06);border-color:rgba(57,217,151,.4);animation:in .5s ease-out}@keyframes in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+    .token-logo{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;background:#283431;color:var(--mint2);font-size:11px;font-weight:750;overflow:hidden;position:relative}.token-logo img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+    .main{min-width:0}.line1,.line2{display:flex;align-items:center;gap:6px;min-width:0}.line1 b{font-size:13.5px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.line1 .addr{font-size:12px;color:var(--muted)}
+    .chain{font-size:9px;font-weight:750;line-height:16px;padding:0 5px;border-radius:5px;background:rgba(115,167,255,.14);color:#9abaff;flex:0 0 auto}
+    .line2{margin-top:3px;font-size:10.5px;white-space:nowrap}.kol{color:var(--mint)}
+    .fr-hi{color:var(--red)}.fr-mid{color:var(--orange)}.fr-lo{color:var(--amber)}.fr-min{color:var(--muted)}.fr-none{color:var(--faint)}
+    .spark{width:56px;height:26px;display:block}.spark polyline{fill:none;stroke:var(--mint);stroke-width:1.6;vector-effect:non-scaling-stroke}.spark.down polyline{stroke:var(--red)}.spark.flat polyline{stroke:var(--faint);stroke-dasharray:3 3}
+    .right{display:flex;flex-direction:column;align-items:flex-end;gap:1px}.mc{font-size:12.5px}.change{font-size:10px}.since{font-size:9px;color:var(--faint)}.up{color:var(--mint)}.down{color:var(--red)}.dim{color:var(--faint)}
+    .empty{padding-top:40px;text-align:center;color:var(--faint);font-size:11px}.empty button{color:var(--faint);font-size:11px;padding:3px 5px;border-radius:5px}.empty button:hover{color:var(--mint2);background:rgba(255,255,255,.06)}
+    footer{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--line);color:var(--muted);font-size:10.5px;font-family:"Cascadia Mono",Consolas,monospace}
+    footer .status{display:flex;align-items:center;gap:6px;min-width:0;flex:1}footer .status span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    footer button{color:var(--muted);padding:3px 5px;border-radius:5px;display:flex;align-items:center;gap:4px;white-space:nowrap}footer button:hover{color:var(--ink);background:rgba(255,255,255,.07)}
+    footer .health{color:var(--red);background:rgba(255,107,105,.1);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}footer .health:hover{color:#fff;background:rgba(255,107,105,.25)}
+    .toast{position:fixed;left:50%;bottom:47px;transform:translate(-50%,8px);background:#263431;border:1px solid rgba(57,217,151,.4);color:var(--mint2);padding:7px 11px;border-radius:8px;font-size:11px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}.toast.show{opacity:1;transform:translate(-50%,0)}
+    /* 边缘缩放手柄（透明窗口没有系统边框） */
+    .grip{position:fixed;z-index:5;-webkit-app-region:no-drag}.grip.right{top:14px;bottom:14px;right:0;width:6px;cursor:ew-resize}.grip.top{left:14px;right:14px;top:0;height:5px;cursor:ns-resize}.grip.bottom{left:14px;right:14px;bottom:0;height:6px;cursor:ns-resize}.grip.corner{right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize}
+    .compact .toolbar,.compact .cols,.compact .list,.compact footer,.compact .grip,.compact .brand-text,.compact .head-actions .full{display:none}
+    .compact header{height:100%;border:0;justify-content:center;padding:0}.compact .head-actions{margin:0;position:absolute;inset:0}.compact .head-actions .compact-toggle{width:100%;height:100%;opacity:0}
+    /* 收起态的未读角标：隐藏 / 收起期间到的新币数（主进程计数，展开即清零） */
+    .brand-mark{position:relative}.unseen{position:absolute;top:-7px;right:-9px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-weight:750;line-height:17px;text-align:center;box-shadow:0 0 0 2px #182022}
+    .compact .unseen{animation:pulse 1.6s ease-in-out infinite}@keyframes pulse{50%{transform:scale(1.18)}}
+    @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand"><div class="brand-mark">f<span id="unseen" class="unseen num" hidden></span></div><div class="brand-text"><b>fomomo</b><span><i id="head-dot" class="dot"></i><span id="subtitle">正在连接</span></span></div></div>
+      <div class="head-actions no-drag"><button id="compact" class="icon-btn compact-toggle" title="收起 / 展开">−</button><button id="hide" class="icon-btn full" title="隐藏悬浮窗（托盘图标可重新打开）">×</button></div>
+    </header>
+    <div class="toolbar"><label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="query" placeholder="搜索代币名 / CA" autocomplete="off" /><span id="qcount" class="cnt num" hidden></span><button id="qclear" class="clr" title="清空搜索" hidden>✕</button></label><button id="sort" class="sort" title="切换排序">最新</button></div>
+    <div class="cols"><span>代币 / KOL</span><span class="c2">走势</span><span class="c3">MC / 喊后</span></div>
+    <div id="list" class="list"></div>
+    <footer>
+      <div class="status"><i id="foot-dot" class="dot"></i><span id="foot-status">连接中</span></div>
+      <button id="health" class="health" hidden title="点击去群组页处理"></button>
+      <button id="dash" title="设置 / 群组 / 统计">⚙</button>
+      <button id="battle" title="24h 战况：全部喊单的结构、单个与总体收益">▥ 24h</button>
+      <button id="fomo" title="登录 fomo.family（可选）">fomo</button>
+      <button id="gmgn" title="点击打开 gmgn 窗口"><i id="gmgn-dot" class="dot"></i><span id="gmgn-label">gmgn</span></button>
+    </footer>
+  </div>
+  <div class="grip top" data-edge="top"></div><div class="grip right" data-edge="right"></div><div class="grip bottom" data-edge="bottom"></div><div class="grip corner" data-edge="bottom-right"></div>
+  <div id="toast" class="toast"></div>
+  <script src="ui.js"></script>
+  <script>
+    const { esc, compact, pct, agoShort, frontRankText, frontRankHelp, frontRankClass, chainOf, chainLabel, shortAddr } = window.fmt;
+    const $ = (s) => document.querySelector(s);
+    const toast = (text) => { const n = $("#toast"); n.textContent = text; n.classList.add("show"); clearTimeout(toast.timer); toast.timer = setTimeout(() => n.classList.remove("show"), 2200); };
+    let tokens = [], query = "", sortMode = "new", connected = false, configured = null, groupLabel = "", freshAddress = null, fomoLoggedIn = false;
+
+    function spark(values, up, live) {
+      const a = Array.isArray(values) && values.length > 1 ? values : [0.5, 0.5];
+      const min = Math.min(...a), max = Math.max(...a), span = max - min || 1;
+      const points = a.map((v, i) => `${(i / (a.length - 1) * 56).toFixed(1)},${(23 - (v - min) / span * 20).toFixed(1)}`).join(" ");
+      return `<svg class="spark ${!live ? "flat" : up ? "" : "down"}" viewBox="0 0 56 26" preserveAspectRatio="none"><polyline points="${points}"/></svg>`;
+    }
+
+    function row(t) {
+      const m = t.market || {}, c = chainOf(t);
+      const ch = t.change, cls = ch == null ? "dim" : ch >= 0 ? "up" : "down";
+      const logo = `${esc((m.symbol || "?").slice(0, 2))}${m.logo ? `<img src="${esc(m.logo)}" alt="" onerror="this.remove()"/>` : ""}`;
+      const fr = t.fomo ? `<span class="${frontRankClass(t.fomo.frontRank?.ratio)}" title="${esc("fomo 前排 " + frontRankText(t.fomo.frontRank) + "\n" + frontRankHelp(t.fomo.frontRank))}">◔ ${esc(frontRankText(t.fomo.frontRank))}</span>` : "";
+      return `<article class="row ${t.address === freshAddress ? "fresh" : ""}" data-address="${esc(t.address)}" data-chain="${esc(c)}">
+        <div class="token-logo">${logo}</div>
+        <div class="main"><div class="line1">${m.symbol ? `<b>${esc(m.symbol)}</b>` : `<span class="addr num">${esc(shortAddr(t.address))}</span>`}<span class="chain">${esc(chainLabel(c))}</span></div>
+          <div class="line2 num"><span class="kol" title="喊单人数">👥 ${t.kol || 0}</span>${fr}</div></div>
+        ${spark(t.spark, t.trend > 0, t.live)}
+        <div class="right num"><span class="mc">${compact(m.mc)}</span><span class="change ${cls}">${pct(ch, t.changeApprox)}</span><span class="since">${agoShort(t.firstSeen)}前喊</span></div>
+      </article>`;
+    }
+
+    function shown() {
+      const q = query.trim().toLowerCase();
+      const list = q ? tokens.filter((t) => [t.address, t.market?.symbol, t.market?.name].some((v) => String(v || "").toLowerCase().includes(q))) : tokens.slice();
+      if (sortMode === "mc") list.sort((a, b) => (b.market?.mc || 0) - (a.market?.mc || 0));
+      return list;
+    }
+
+    function render() {
+      const list = shown(), q = query.trim();
+      let html;
+      if (list.length) html = list.map(row).join("");
+      else if (!tokens.length && connected && configured === false) html = `<div class="empty"><button data-go="groups">还没配置群来源 · 去设置</button></div>`;
+      else html = `<div class="empty">${tokens.length ? `没有匹配「${esc(q)}」的代币` : connected ? "等待群里出现合约地址…" : "正在连接数据进程…"}</div>`;
+      $("#list").innerHTML = html;
+      $("#qcount").hidden = $("#qclear").hidden = !q;
+      $("#qcount").textContent = `${list.length}/${tokens.length}`;
+      $("#subtitle").textContent = `监听 ${groupLabel || "—"} · ${tokens.length} 代币`;
+      scheduleVisible();
+    }
+
+    // 「fomo 前排」兴趣集：可见行 + 上下各一屏预取，合并 300ms 再整集发（主进程在面板隐藏 / 收起时改发 []）
+    let visibleTimer = null, lastVisible = "";
+    function scheduleVisible() { clearTimeout(visibleTimer); visibleTimer = setTimeout(pushVisible, 300); }
+    function pushVisible() {
+      const box = $("#list").getBoundingClientRect(), h = box.height;
+      const list = [...document.querySelectorAll(".row")].filter((el) => { const r = el.getBoundingClientRect(); return r.bottom >= box.top - h && r.top <= box.bottom + h; }).map((el) => el.dataset.address);
+      const key = list.join(",");
+      if (key === lastVisible) return;
+      lastVisible = key;
+      window.fomomo.send({ t: "front_rank_visible", addresses: list });
+    }
+    $("#list").addEventListener("scroll", scheduleVisible, { passive: true });
+
+    function status(s) {
+      const cls = s.state === "connected" ? "ok" : s.state === "failed" ? "bad" : "";
+      $("#head-dot").className = $("#foot-dot").className = "dot " + cls;
+      $("#foot-status").textContent = s.state === "connected" ? "已连接" : s.detail || s.state;
+      if (connected !== (s.state === "connected")) { connected = s.state === "connected"; render(); }
+    }
+
+    function gmgnStatus(state, message) {
+      const ok = state === "ready";
+      $("#gmgn-dot").className = "dot " + (ok ? "ok" : state === "loading" ? "" : "bad");
+      $("#gmgn-label").textContent = ok ? "gmgn" : state === "loading" ? "gmgn 加载中" : state === "attention" ? "gmgn 需验证" : state === "error" ? "gmgn 出错" : "gmgn 未连";
+      $("#gmgn").title = (message || "") + "（点击打开 gmgn 窗口）";
+    }
+
+    // 已选群的监听异常：底栏红字「飞书 2 个群异常」，点了去 dashboard 群组页
+    const SOURCE_LABEL = { wechat: "微信", feishu: "飞书", qq: "QQ" };
+    function healthStatus(items) {
+      const list = Array.isArray(items) ? items.filter((i) => i.failing > 0) : [];
+      const btn = $("#health");
+      btn.hidden = !list.length;
+      btn.textContent = list.map((i) => `${SOURCE_LABEL[i.source] || i.source} ${i.failing} 个群异常`).join(" · ");
+      btn.title = list.map((i) => i.error).filter(Boolean).join("\n") + (list.length ? "\n点击去群组页处理" : "");
+    }
+
+    function onEvent(e) {
+      if (e.t === "state" && Array.isArray(e.tokens)) { tokens = e.tokens; render(); }
+      else if (e.t === "ready") { const gs = Array.isArray(e.groups) ? e.groups.map((g) => g.displayName).filter(Boolean) : []; groupLabel = !gs.length ? "未选择群" : gs.length === 1 ? gs[0] : `${gs[0]} 等 ${gs.length} 群`; lastVisible = ""; render(); }
+      else if (e.t === "sources") { configured = e.configured; render(); }
+      else if (e.t === "new_token") { freshAddress = e.address; render(); setTimeout(() => { if (freshAddress === e.address) { freshAddress = null; render(); } }, 2200); }
+      else if (e.t === "unseen") { const n = Number(e.count) || 0; $("#unseen").hidden = n <= 0; $("#unseen").textContent = n > 99 ? "99+" : String(n); }
+      else if (e.t === "compact") document.body.classList.toggle("compact", !!e.value);
+      else if (e.t === "source_health") healthStatus(e.items);
+      else if (e.t === "token_hidden") { tokens = tokens.filter((x) => x.address !== e.address); render(); }
+      else if (e.t === "settings" && e.settings?.panel) document.documentElement.style.setProperty("--a", String(Math.min(1, Math.max(0, Number(e.settings.panel.backgroundOpacity ?? 1)))));
+      else if (e.t === "bridge_status" && e.bridge === "gmgn") gmgnStatus(e.state, e.message);
+      else if (e.t === "fomo_state") { fomoLoggedIn = !!e.loggedIn; $("#fomo").textContent = fomoLoggedIn ? "fomo ✓" : "fomo"; $("#fomo").title = fomoLoggedIn ? "fomo.family 已登录（点击打开窗口）" : "登录 fomo.family（可选）"; }
+    }
+
+    $("#list").addEventListener("click", (ev) => {
+      const go = ev.target.closest("[data-go]");
+      if (go) return window.fomomo.openDashboard(go.dataset.go);
+      const el = ev.target.closest(".row");
+      if (!el) return;
+      const t = tokens.find((x) => x.address === el.dataset.address && chainOf(x) === el.dataset.chain) || tokens.find((x) => x.address === el.dataset.address);
+      if (t) window.fomomo.openDetail(t);
+    });
+    $("#query").oninput = (e) => { query = e.target.value; render(); };
+    $("#query").onkeydown = (e) => { if (e.key === "Escape") { e.target.value = query = ""; render(); } };
+    $("#qclear").onclick = () => { $("#query").value = query = ""; render(); };
+    $("#sort").onclick = () => { sortMode = sortMode === "new" ? "mc" : "new"; $("#sort").textContent = sortMode === "new" ? "最新" : "市值"; render(); };
+    $("#compact").onclick = () => { document.body.classList.toggle("compact"); window.fomomo.toggleCompact(document.body.classList.contains("compact")); };
+    $("#hide").onclick = () => window.fomomo.hidePanel();
+    $("#dash").onclick = () => window.fomomo.openDashboard(null);
+    $("#battle").onclick = () => window.fomomo.openDashboard("battle");
+    $("#fomo").onclick = () => window.fomomo.openFomo();
+    $("#gmgn").onclick = () => window.fomomo.openGmgn();
+    $("#health").onclick = () => window.fomomo.openDashboard("groups");
+
+    // 边缘手柄：指针捕获后按屏幕位移交给主进程改窗口尺寸
+    for (const g of document.querySelectorAll(".grip")) {
+      g.addEventListener("pointerdown", (e) => {
+        g.setPointerCapture(e.pointerId);
+        const sx = e.screenX, sy = e.screenY, edge = g.dataset.edge;
+        window.fomomo.resizePanel("start", edge, 0, 0);
+        const move = (m) => window.fomomo.resizePanel("move", edge, m.screenX - sx, m.screenY - sy);
+        const up = () => {
+          g.removeEventListener("pointermove", move);
+          g.removeEventListener("lostpointercapture", up);
+          window.fomomo.resizePanel("end", edge, 0, 0);
+        };
+        g.addEventListener("pointermove", move);
+        g.addEventListener("lostpointercapture", up);
+      });
+    }
+
+    window.fomomo.onEvent(onEvent); window.fomomo.onStatus(status);
+    window.fomomo.bootstrap().then((b) => {
+      if (b?.tokens) tokens = b.tokens;
+      if (b?.status) status(b.status);
+      if (b?.compact) document.body.classList.add("compact");
+      if (b?.gmgn) gmgnStatus(b.gmgn.state, b.gmgn.message);
+      for (const e of Object.values(b?.events || {})) onEvent(e);
+      render();
+    });
+  </script>
+</body>
+</html>

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>fomomo · dashboard</title>
 <style>
+  [hidden]{display:none !important}
   :root{
     color-scheme:dark;
     --ink:#f2f4f6; --muted:#8b9296; --faint:#565c61; --hair:rgba(255,255,255,.08); --hair2:rgba(255,255,255,.05);
@@ -121,9 +122,14 @@
   .row{display:flex;align-items:center;gap:10px}
   .row label{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:12.5px;white-space:nowrap}
   .grow{flex:1}
-  input[type=text],input[type=number],select{background:var(--raise);border:1px solid var(--hair);color:var(--ink);border-radius:8px;height:32px;padding:0 10px;font-size:13px;outline:none;font-variant-numeric:tabular-nums;transition:border-color .12s}
-  input[type=text]:focus,input[type=number]:focus,select:focus{border-color:rgba(255,255,255,.18)}
-  input[type=text]{width:100%}
+  input[type=text],input[type=password],input[type=number],select{background:var(--raise);border:1px solid var(--hair);color:var(--ink);border-radius:8px;height:32px;padding:0 10px;font-size:13px;outline:none;font-variant-numeric:tabular-nums;transition:border-color .12s}
+  input[type=text]:focus,input[type=password]:focus,input[type=number]:focus,select:focus{border-color:rgba(255,255,255,.18)}
+  input[type=text],input[type=password]{width:100%}
+  .qqform{margin-top:12px}
+  .qqform .kv{grid-template-columns:96px 1fr}
+  .qqform .prog.err{color:var(--down)}
+  #qq-settings .qqform .kv{grid-template-columns:140px 1fr}
+  #qq-settings .qqform .prog.err{margin-top:10px;font-size:12px;line-height:1.5}
   input[type=number]{width:84px}
   button.act{background:var(--accent);color:var(--logo-ink);border:0;border-radius:8px;height:32px;padding:0 14px;font-size:13px;font-weight:600;cursor:pointer;transition:background .12s}
   button.act:hover{background:var(--accent2)}
@@ -145,6 +151,11 @@
   .notice.err b{color:var(--down)}
   .notice code{display:block;font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:pre-wrap;word-break:break-all;margin:6px 0}
   .pill.warn{color:var(--amber)} .pill.bad{color:var(--down)} .pill.ok{color:var(--accent2)}
+  /* 群组页：来源已就绪但监听出问题时的「异常处理」条，按钮就地修 */
+  .trouble{padding:14px;margin:12px 0 4px;border:1px solid rgba(255,91,91,.35);border-radius:10px;background:var(--raise);border-bottom:1px solid rgba(255,91,91,.35)}
+  .trouble .row2{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
+  .trouble .prog{margin-top:10px;font-size:12px;line-height:1.6;color:var(--muted)}
+  .trouble .prog b{color:var(--down)}
   .g.saving{opacity:.6;pointer-events:none}
   /* 群组页：工具栏吸顶（列表长，保存按钮不能滚出视野）；有草稿时出现 撤销 / 保存 */
   .toolbar.sticky{position:sticky;top:-20px;z-index:2;background:var(--bg);padding:12px 0 10px;margin:-12px 0 6px}
@@ -171,6 +182,14 @@
   .setup .prog.err{border-color:rgba(255,91,91,.35)} .setup .prog.err b{color:var(--down)}
   .setup .row2{display:flex;gap:8px;align-items:center;margin-top:14px}
   .setup .row2 .act{margin-top:0}
+  .setup .steps{display:grid;gap:8px;margin:12px 0 14px;padding:0;counter-reset:qqstep}
+  .setup .step{display:grid;grid-template-columns:24px 1fr;gap:8px;align-items:start;color:var(--muted);font-size:12.5px;line-height:1.5}
+  .setup .step:before{counter-increment:qqstep;content:counter(qqstep);display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--raise);border:1px solid var(--hair);color:var(--ink);font-weight:700}
+  .setup .step b{color:var(--ink)}
+  .setup .step a{color:var(--accent)}
+  .setup details{margin-top:12px;border-top:1px solid var(--hair);padding-top:10px}
+  .setup summary{cursor:pointer;color:var(--faint);font-size:11.5px}
+  .setup .cmd{display:block;margin-top:8px;padding:9px 10px;background:#090a0b;border:1px solid var(--hair);border-radius:7px;font:11px/1.5 var(--mono);color:var(--muted);white-space:pre-wrap;user-select:all}
   button.ghost{background:transparent;border:1px solid var(--hair);color:var(--muted);border-radius:8px;height:32px;padding:0 12px;font-size:12.5px;cursor:pointer;transition:color .12s,border-color .12s}
   button.ghost:hover{color:var(--ink);border-color:rgba(255,255,255,.18)}
   .form{max-width:520px}
@@ -224,6 +243,7 @@
   button.copy:hover{color:var(--ink);border-color:rgba(255,255,255,.18)}
   .kv .k-sub{color:var(--faint);font-size:11px;margin-top:4px}
   .kv input[type=number]{width:120px}
+  .kv input[type=checkbox]{width:16px;height:16px;padding:0;accent-color:var(--accent);margin:0}
   .card.form{max-width:none}
   td.err{max-width:260px;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-weight:400}
   /* 24h 战况：SVG 曲线 / 直方图 / 排名条 */
@@ -264,7 +284,7 @@
     <button data-tab="groups"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>群组</button>
     <button data-tab="stats"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-5 4 3 5-7"/></svg>喊单人</button>
     <button data-tab="tokens"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9h4.5a2 2 0 0 1 0 4H9zM9 13h5a2 2 0 0 1 0 4H9zM11 7v2M11 17v2"/></svg>代币</button>
-    <button data-tab="trade"><svg viewBox="0 0 24 24"><path d="M7 17l4-8 4 5 5-9"/><path d="M3 21h18"/><path d="M17 5h3v3"/></svg>交易</button>
+    <button id="trade-nav" data-tab="trade"><svg viewBox="0 0 24 24"><path d="M7 17l4-8 4 5 5-9"/><path d="M3 21h18"/><path d="M17 5h3v3"/></svg>交易</button>
     <button data-tab="battle"><svg viewBox="0 0 24 24"><path d="M3 20h18"/><path d="M6 20V10M11 20V4M16 20v-8M21 20v-5"/></svg>24h 战况</button>
   </nav>
   <div class="grp">设置</div>
@@ -328,6 +348,7 @@
       <div class="seg" id="gtabs" role="tablist" aria-label="群来源">
         <button role="tab" data-src="wechat" class="on" aria-selected="true" aria-controls="glist">微信<span class="cnt" id="gcnt-wechat"></span></button>
         <button role="tab" data-src="feishu" aria-selected="false" aria-controls="glist" tabindex="-1">飞书<span class="cnt" id="gcnt-feishu"></span></button>
+        <button role="tab" data-src="qq" aria-selected="false" aria-controls="glist" tabindex="-1">QQ<span class="cnt" id="gcnt-qq"></span></button>
       </div>
       <div class="savebar" id="gsavebar" hidden>
         <button class="ghost" id="gundo" type="button">撤销</button>
@@ -468,7 +489,7 @@
   </section>
 
   <section id="settings">
-    <div class="page-h"><div><h1>设置</h1><p>改动即时生效：宽高在失焦 / 回车时应用，不透明度拖动时实时应用</p></div></div>
+    <div class="page-h"><div><h1>设置</h1><p>改动即时生效：数字在失焦 / 回车时应用，不透明度拖动时实时应用</p></div></div>
     <div class="form">
       <h2>悬浮窗</h2>
       <div class="kv">
@@ -477,6 +498,25 @@
         <label>背景不透明度</label><div><input id="po" type="range" min="0" max="100" step="1" /><output id="poValue">100%</output></div>
       </div>
       <div class="row" style="margin-top:12px"><span class="status" id="sstat"></span></div>
+    </div>
+    <div class="form" id="popup-form" hidden style="margin-top:24px">
+      <h2>新币提醒</h2>
+      <div class="kv">
+        <label for="popup-mode">新币出现时</label><div><select id="popup-mode"><option value="card">弹出详情卡</option><option value="notify">只发系统提醒</option><option value="off">不提醒（只在列表里高亮）</option></select><div class="k-sub">悬浮窗隐藏或收起时，除「不提醒」外都会发系统提醒，并在收起的图标上计数</div></div>
+        <label for="popup-seconds">详情卡停留 (秒)</label><div><input id="popup-seconds" type="number" min="2" max="60" step="1" /><div class="k-sub">到时间自动收起；在卡上点一下就会钉住不再收起</div></div>
+      </div>
+      <div class="row" style="margin-top:12px"><span class="status" id="popup-stat"></span></div>
+    </div>
+    <div class="form" id="qq-form" style="margin-top:24px">
+      <h2>QQ 连接</h2>
+      <div class="hint" style="margin-top:0">通过本机 NapCat 等 OneBot 11 桥接读取 QQ 群。启用后在「群组 → QQ」勾选要监听的群。</div>
+      <div id="qq-settings"></div>
+    </div>
+    <div class="form" id="sys-form" hidden style="margin-top:24px">
+      <h2>系统</h2>
+      <div class="kv">
+        <label for="autostart">开机自动启动</label><div><input id="autostart" type="checkbox" /><div class="k-sub" id="autostart-sub">登录 Windows 后自动在后台开始监听</div></div>
+      </div>
     </div>
   </section>
   </div>
@@ -505,12 +545,14 @@ const segOn = (sel, b) => document.querySelectorAll(sel).forEach((z) => z.classL
 
 // ---- 导航（原生壳里没有工具栏了，侧栏就是导航；showTab 保留给 Swift 调） ----
 const TITLES = { overview: "总览", groups: "群组", stats: "喊单人", tokens: "代币", trade: "交易", battle: "24h 战况", settings: "设置" };
+let platformInfo = { tradeEnabled: true, platform: "unknown" };
 window.showTab = (id) => {
+  if (id === "trade" && !platformInfo.tradeEnabled) id = "overview";
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === id));
   document.querySelectorAll(".content section").forEach((s) => s.classList.toggle("on", s.id === id));
   $("#crumb").textContent = TITLES[id] || id;
   $("#q").value = ""; applySearch();
-  if (id === "overview") loadOverview(); if (id === "groups") ensureGroups(); if (id === "stats") loadStats(); if (id === "tokens") loadTokens(); if (id === "trade") loadTrade(); if (id === "battle") loadBattle(); if (id === "settings") loadSettings();
+  if (id === "overview") loadOverview(); if (id === "groups") ensureGroups(); if (id === "stats") loadStats(); if (id === "tokens") loadTokens(); if (id === "trade" && platformInfo.tradeEnabled) loadTrade(); if (id === "battle") loadBattle(); if (id === "settings") loadSettings();
 };
 document.querySelectorAll("nav button").forEach((b) => b.onclick = () => showTab(b.dataset.tab));
 if (new URLSearchParams(location.search).has("native")) document.body.classList.add("native");
@@ -581,18 +623,34 @@ document.querySelectorAll(".seg button[data-r]").forEach((b) => b.onclick = () =
 const SRC = {
   wechat: { label: "微信", key: "groups", prefix: "", desc: "勾好要监听的群后点「保存」一次生效；新加的群先回灌最近 100 条消息再进入监听", empty: "还没有发现微信群", hint: "点「刷新」重试。" },
   feishu: { label: "飞书", key: "feishuGroups", prefix: "feishu:", desc: "勾好要监听的群后点「保存」一次生效；新加的群先回灌最近 100 条消息，之后每轮同时读取全部已选群", empty: "当前飞书账号没有可见的群", hint: "若提示未登录或无权限：切回引导卡重新登录后，点「刷新」重试。" },
+  qq: { label: "QQ", key: "qqGroups", prefix: "qq:", desc: "通过本机 OneBot 桥接读取个人 QQ 群消息；勾选后点「保存」一次生效", empty: "OneBot 暂未返回 QQ 群", hint: "请先启动 NapCat/Lagrange，并确认 WebSocket 地址可用。" },
 };
 // 来源就绪态（/api/sources）：未就绪的来源在群列表位置显示引导卡；两者都没配好时并排两张。群组页可见时 2s 一轮询
 let sources = null, sourcesLoading = false;
+const sourceKeys = (st = sources) => Object.keys(SRC).filter((s) => st?.[s]?.supported !== false);
+function applyPlatform(next) {
+  platformInfo = { tradeEnabled: next?.tradeEnabled !== false, platform: next?.platform || "unknown" };
+  const tradeNav = $("#trade-nav"), tradeSection = $("#trade");
+  if (tradeNav) tradeNav.hidden = !platformInfo.tradeEnabled;
+  if (tradeSection) tradeSection.hidden = !platformInfo.tradeEnabled;
+  if (!platformInfo.tradeEnabled && $("#trade")?.classList.contains("on")) showTab("overview");
+  // 宽高输入框的范围跟服务端 / 壳的实际限制一致，填小了会被夹到下限并回填
+  const L = next?.panelLimits;
+  if (L) { $("#pw").min = L.minWidth; $("#pw").max = L.maxWidth; $("#ph").min = L.minHeight; $("#ph").max = L.maxHeight; }
+  // 新币弹卡方式目前只有 Windows 壳读
+  $("#popup-form").hidden = platformInfo.platform !== "win32";
+}
 async function loadSources(refresh = false) {
   if (sourcesLoading) return;
   sourcesLoading = true;
   try {
     const next = await api(`/api/sources${refresh ? "?refresh=1" : ""}`);
-    const prev = sources; sources = next;
+    const prev = sources; sources = next; applyPlatform(next);
+    const keys = sourceKeys(next);
+    if (!keys.includes(src)) src = keys[0] || "feishu";
     // 第一次拿到就绪态：当前页签的来源没配好而另一个已就绪 → 直接切过去（首启机器上往往已有 lark-cli 登录，别让人对着微信引导卡找飞书群）
-    if (!prev && !next[src]?.ready) { const other = Object.keys(SRC).find((s) => next[s]?.ready); if (other) { src = other; renderTabs(); } }
-    for (const s of Object.keys(SRC)) if (next[s].ready && !prev?.[s]?.ready) { gsrc[s].groups = null; gsrc[s].error = null; if (s === src) loadGroups(s); }
+    if (!prev && !next[src]?.ready) { const other = keys.find((s) => next[s]?.ready); if (other) { src = other; renderTabs(); } }
+    for (const s of keys) if (next[s].ready && !prev?.[s]?.ready) { gsrc[s].groups = null; gsrc[s].error = null; if (s === src) loadGroups(s); }
     if (JSON.stringify(prev) !== JSON.stringify(next)) { renderTabs(); renderGroups(); }
   } catch (e) {
     if (!sources) { sources = { error: e.message }; renderGroups(); }
@@ -606,7 +664,7 @@ async function sourceAction(action) {
   try { sources = await api(`/api/sources/${action}`, { method: "POST" }); } catch (e) { setupError = e.message; }
   setupBusy = false; renderTabs(); renderGroups();
 }
-const ready = (s) => !!sources?.[s]?.ready;
+const ready = (s) => sources?.[s]?.supported !== false && !!sources?.[s]?.ready;
 function chk(state, text, sub, action) {
   const row = el("div", "chk" + (state === true ? " ok" : state === false ? " bad" : "")), t = el("div", "t");
   row.append(el("i", null, state === true ? "✓" : state === false ? "!" : "·"));
@@ -615,12 +673,42 @@ function chk(state, text, sub, action) {
   return row;
 }
 const ghost = (text, onclick) => { const b = el("button", "ghost", text); b.type = "button"; b.disabled = setupBusy; b.onclick = onclick; return b; };
+// Windows：优先自动从已运行的微信取钥，失败时仍可手动粘贴。渲染会重建节点，所以把输入值留在外面
+let keyBusy = false, keyError = null, keyDraft = "";
+function keyForm(st) {
+  const box = el("div"), input = el("input");
+  input.type = "text"; input.placeholder = "粘贴 64 位十六进制数据库密钥"; input.spellcheck = false;
+  input.autocomplete = "off"; input.value = keyDraft; input.disabled = keyBusy;
+  input.oninput = () => { keyDraft = input.value; };
+  const submit = async () => {
+    const key = input.value.trim();
+    if (!key || keyBusy) return;
+    keyBusy = true; keyError = null; renderGroups();
+    try { sources = await api("/api/sources/wechat/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) }); keyDraft = ""; }
+    catch (e) { keyError = e.message; }
+    keyBusy = false; renderTabs(); renderGroups();
+  };
+  input.onkeydown = (e) => { if (e.key === "Enter") submit(); };
+  const b = el("button", "act", keyBusy ? "验证中…" : "保存并验证");
+  b.type = "button"; b.disabled = keyBusy || !st.installed; b.onclick = submit;
+  const row = el("div", "row2"); row.append(b);
+  if (st.autoKey) { const a = el("button", "ghost", keyBusy ? "" : "从微信自动获取"); a.type = "button"; a.disabled = keyBusy || !st.installed; a.onclick = async () => { keyBusy = true; keyError = null; renderGroups(); try { sources = await api("/api/sources/wechat/auto-key", { method: "POST" }); keyDraft = ""; } catch (e) { keyError = e.message; } keyBusy = false; renderTabs(); renderGroups(); }; row.prepend(a); }
+  box.append(input, row);
+  if (keyError) { const p = el("div", "prog err"); p.append(el("b", null, "没能用这个密钥打开"), document.createTextNode(" " + keyError)); box.append(p); }
+  box.append(el("div", "hint", "密钥是微信本地数据库的口令，需要用第三方工具从运行中的微信进程里取一次。填进来会立刻验证：能打开当前登录账号的聊天库才保存。换微信账号后需要重填。"));
+  return box;
+}
 const copyBtn = (text) => { const b = el("button", "copy", "复制链接"); b.type = "button"; b.onclick = async () => { try { await navigator.clipboard.writeText(text); b.textContent = "已复制"; } catch { b.textContent = "复制失败"; } setTimeout(() => { b.textContent = "复制链接"; }, 1200); }; return b; };
 function setupCard(s) {
   const st = sources[s], card = el("div", "card"), h = el("h2", null, SRC[s].label);
   h.append(el("span", "pill" + (st.ready ? " ok" : ""), st.ready ? "就绪" : "未配置"));
   card.append(h);
-  if (s === "wechat") {
+  if (s === "wechat" && st.manualKey) {
+    card.append(el("div", "lead", "直接读本机微信的聊天库（只读、不导出）。填一次 64 位数据库密钥即可；只保存密钥，不保存任何聊天内容。"));
+    card.append(chk(st.installed, "微信 4.x 已安装并登录过", st.installed ? null : "没找到微信数据目录：先安装微信并登录"));
+    card.append(chk(st.ready ? true : st.keys ? false : null, "数据库密钥", st.ready ? st.dbDir : st.keys ? (st.error || "密钥打不开微信库") : "尚未填写"));
+    if (!st.ready) card.append(keyForm(st));
+  } else if (s === "wechat") {
     card.append(el("div", "lead", "直接读本机微信的聊天库（只读、不导出）。密钥要从微信进程里提取一次，需要在终端里输入管理员密码，约 3 分钟；只保存密钥，不保存任何聊天内容。"));
     card.append(chk(st.installed, "微信 4.x 已安装并登录过", st.installed ? null : "没找到微信数据目录：先安装微信并登录"));
     card.append(chk(st.diskAccess, "读取微信数据的权限", st.diskAccess === false ? "刚才系统弹「Fomomo 想要访问其他 App 的数据」时选了不允许。补救：系统设置 → 隐私与安全性 → 完全磁盘访问权限，把 Fomomo（开发模式：启动它的终端）加进去，然后重启应用" : st.diskAccess === null ? "微信目录不存在，暂无法判断" : null,
@@ -639,6 +727,20 @@ function setupCard(s) {
         card.append(b);
       }
     }
+  } else if (s === "qq") {
+    card.append(el("div", "lead", "QQ 需要先装一个“小助手”把群消息交给 Fomomo。Fomomo 不会读取 QQ 密码，也不会替你登录 QQ。"));
+    const steps = el("div", "steps");
+    const s1 = el("div", "step"); s1.append(el("div", null, "在这台电脑安装 NapCat（推荐）并扫码登录你的 QQ。"));
+    const s2 = el("div", "step"); s2.append(el("div", null, "打开 NapCat 设置 → 网络配置 → OneBot 11 → 正向 WebSocket，地址填 127.0.0.1，端口填 8080，然后保存。"));
+    const s3 = el("div", "step"); const s3b = el("div"); s3b.append(el("div", null, "点下面的「启用 QQ 监听」。地址一般不用改；NapCat 改过端口或设了 Token 才需要填。"), qqForm(renderGroups)); s3.append(s3b);
+    const s4 = el("div", "step"); s4.append(el("div", null, "看到“QQ 已连接”后，在这里勾选要监听的群，再点“保存”。"));
+    steps.append(s1, s2, s3, s4); card.append(steps);
+    card.append(chk(st.ready, st.ready ? "QQ 已连接" : "QQ 尚未连接", st.ready ? "可以刷新并选择要监听的群" : st.enabled && st.error ? `连不上：${st.error}（确认 NapCat 正在运行、地址正确）` : "先完成上面 1～3 步；NapCat 必须保持运行"));
+    const qqActions = el("div", "row2");
+    const reconnect = el("button", "ghost", setupBusy ? "处理中…" : "重新连接"); reconnect.type = "button"; reconnect.disabled = setupBusy; reconnect.onclick = () => sourceAction("qq/reconnect");
+    const restart = el("button", "ghost", setupBusy ? "处理中…" : "重启 NapCat"); restart.type = "button"; restart.disabled = setupBusy; restart.onclick = () => sourceAction("qq/restart");
+    qqActions.append(reconnect, restart); card.append(qqActions);
+    const links = el("div", "hint"); links.append(document.createTextNode("NapCat 下载：")); const a = document.createElement("a"); a.href = "https://napneko.github.io/"; a.target = "_blank"; a.rel = "noreferrer"; a.textContent = "打开官方说明"; links.append(a); card.append(links);
   } else {
     const L = st.login;
     card.append(el("div", "lead", "用你本人的飞书账号读群消息（不需要机器人进群）。首次登录会一键创建一个只读权限的飞书应用，然后在浏览器里授权；全程不需要终端。"));
@@ -662,11 +764,37 @@ function setupCard(s) {
   }
   return card;
 }
+// 异常处理：来源已就绪但监听在报错（watcher 死了 / 飞书拉不动 / OneBot 断了）时，
+// 在群列表上方给一条说明 + 一个「就地修好」的主按钮，再配一个「还不行就走这条」的次级按钮。
+const REPAIR = {
+  wechat: { action: "wechat/restart", label: "重启微信监听", tip: "会停掉当前的读取并重新打开聊天库，只补最近 100 条消息；不动微信本身，已存的喊单不受影响。" },
+  feishu: { action: "feishu/retry", label: "立即重试", tip: "异常群会退避到最长 5 分钟才重试；这里清掉等待马上再拉一次。仍然失败多半是登录过期或被移出群。" },
+  qq: { action: "qq/reconnect", label: "重连 OneBot", tip: "重新连接本机 NapCat；连不上说明 NapCat 没在跑或端口变了。" },
+};
+function renderTrouble(box) {
+  const st = sources?.[src], h = st?.health;
+  if (!h || (!h.failing && !h.error)) return;
+  const n = el("div", "notice err trouble"), R = REPAIR[src];
+  n.append(el("b", null, h.failing ? `${SRC[src].label}有 ${h.failing} 个群监听异常` : `${SRC[src].label}监听异常`));
+  if (h.error) n.append(el("code", null, h.error));
+  n.append(el("span", null, R.tip));
+  const row = el("div", "row2");
+  const fix = el("button", "act", setupBusy ? "处理中…" : R.label);
+  fix.type = "button"; fix.disabled = setupBusy; fix.onclick = () => sourceAction(R.action);
+  row.append(fix);
+  if (src === "qq") row.append(ghost("重启 NapCat", () => sourceAction("qq/restart")));
+  else if (src === "feishu") row.append(ghost("重新登录飞书", () => sourceAction("feishu/login")));
+  else if (st.autoKey) row.append(ghost("重新取密钥", () => sourceAction("wechat/auto-key")));
+  else if (!st.manualKey) row.append(ghost("重新提取密钥", () => sourceAction("wechat/setup")));
+  n.append(row);
+  if (setupError) { const p = el("div", "prog err"); p.append(el("b", null, "操作失败"), document.createTextNode(" " + setupError)); n.append(p); }
+  box.append(n);
+}
 // 当前来源未就绪 → 引导卡；两者都未就绪 → 两张并排（先配哪个都行）；/api/sources 拉不到 → 错误
 function renderSetup(box) {
   if (sources.error) { const n = el("div", "notice err"); n.append(el("b", null, "来源状态读取失败"), el("code", null, sources.error)); box.append(n); return; }
   const both = !sources.configured, wrap = el("div", "setup" + (both ? " both" : ""));
-  for (const s of both ? Object.keys(SRC) : [src]) wrap.append(setupCard(s));
+  for (const s of both ? sourceKeys() : [src]) wrap.append(setupCard(s));
   if (setupError) { const n = el("div", "prog err"); n.append(el("b", null, "操作失败"), document.createTextNode(" " + setupError)); wrap.append(n); }
   box.append(wrap);
 }
@@ -674,7 +802,7 @@ const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls)
 const stripSrc = (s, u) => u.startsWith(SRC[s].prefix) ? u.slice(SRC[s].prefix.length) : u;
 const selectedIds = (s) => (settings && settings[SRC[s].key]) || [];
 let settings = null, src = "wechat", saving = false, settingsVersion = 0;
-const gsrc = { wechat: { groups: null, loading: false, error: null, seq: 0 }, feishu: { groups: null, loading: false, error: null, seq: 0 } };
+const gsrc = { wechat: { groups: null, loading: false, error: null, seq: 0 }, feishu: { groups: null, loading: false, error: null, seq: 0 }, qq: { groups: null, loading: false, error: null, seq: 0 } };
 
 async function loadSettingsData() {
   if (saving) return;
@@ -697,23 +825,26 @@ async function loadGroups(s = src, refresh = false) {
 }
 function ensureGroups() { if (!sources) return loadSources(); const S = gsrc[src]; if (ready(src) && !S.groups && !S.loading) loadGroups(src); }
 function setSource(s) {
-  if (!SRC[s] || s === src) return;
+  if (!SRC[s] || !sourceKeys().includes(s) || s === src) return;
   src = s; renderTabs(); renderGroups(); ensureGroups(); applySearch();
 }
 function renderTabs() {
+  const keys = sourceKeys();
+  if (!keys.includes(src)) src = keys[0] || "feishu";
   document.querySelectorAll("#gtabs button").forEach((b) => {
     const on = b.dataset.src === src;
+    b.hidden = !keys.includes(b.dataset.src);
     b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
     const n = effectiveIds(b.dataset.src).length; b.querySelector(".cnt").textContent = settings ? String(n) : "";
   });
-  $("#gdesc").textContent = sources && !sources.configured ? "先配置微信或飞书之一就能开始；另一个以后随时在这里补上" : sources && !ready(src) ? `${SRC[src].label}还没配置；配好后这里列出可监听的群` : SRC[src].desc;
+  $("#gdesc").textContent = sources && !sources.configured ? (keys.length === 1 ? `先完成${SRC[keys[0]].label}配置，然后勾选要监听的群` : "先配置一个群来源就能开始；其它来源以后随时补上") : sources && !ready(src) ? `${SRC[src].label}还没配置；配好后这里列出可监听的群` : SRC[src].desc;
 }
 const pillFor = (g) => g.state === "monitoring" ? ["ok", "监听中"] : g.state === "starting" ? ["warn", "启动中"] : g.state === "error" ? ["bad", "异常"] : g.watched ? ((g.source || src) === "wechat" ? ["ok", "监听中"] : ["", "已配置"]) : null;
 // 勾选只改本地草稿（pending[s] = 该来源的完整目标集合；null = 没改动），点「保存」一次 PUT 两个来源的改动。
 // 后台 10s 回读 / 2s 来源轮询会重绘列表，勾选状态永远以草稿覆盖已保存值，所以重绘不会把没保存的勾冲掉
-const pending = { wechat: null, feishu: null };
+const pending = { wechat: null, feishu: null, qq: null };
 const effectiveIds = (s) => pending[s] ?? selectedIds(s);
-const pendingCount = () => Object.keys(SRC).reduce((n, s) => {
+const pendingCount = () => sourceKeys().reduce((n, s) => {
   if (!pending[s]) return n;
   const saved = new Set(selectedIds(s)); let d = 0;
   for (const id of pending[s]) if (!saved.has(id)) d++;
@@ -725,7 +856,8 @@ function renderGroups() {
   box.replaceChildren();
   renderSaveBar();
   if (!sources || !ready(src)) { $("#grefresh").disabled = !sources || setupBusy; $("#gstat").textContent = ""; if (sources) renderSetup(box); else box.append(el("div", "notice", "加载中…")); return; }
-  $("#grefresh").disabled = S.loading || saving;
+  $("#grefresh").disabled = S.loading || saving || setupBusy;
+  renderTrouble(box);
   const chosen = effectiveIds(src).length;
   $("#gstat").textContent = S.groups ? `${chosen} / ${S.groups.length} 个群${pending[src] ? " · 未保存" : ""}${S.loading ? " · 刷新中…" : ""}` : S.loading ? "加载中…" : "";
   if (S.error) {
@@ -770,11 +902,11 @@ function toggleGroup(s, cb) {
 // 一次 PUT 两个来源的改动；成功后清草稿、按真实监控状态回读（新勾的群会先回灌最近 100 条再进入监听中）；失败草稿保留
 async function saveGroups() {
   if (saving || !settings || !pendingCount()) return;
-  const patch = {}; for (const s of Object.keys(SRC)) if (pending[s]) patch[SRC[s].key] = [...pending[s]];
-  saving = true; settingsVersion++; for (const s of Object.keys(SRC)) { gsrc[s].seq++; gsrc[s].loading = false; gsrc[s].error = null; } renderGroups();
+  const patch = {}; for (const s of sourceKeys()) if (pending[s]) patch[SRC[s].key] = [...pending[s]];
+  saving = true; settingsVersion++; for (const s of sourceKeys()) { gsrc[s].seq++; gsrc[s].loading = false; gsrc[s].error = null; } renderGroups();
   try {
     settings = await putSettings(patch);
-    for (const s of Object.keys(SRC)) {
+    for (const s of sourceKeys()) {
       if (!pending[s]) continue;
       const set = pending[s], S = gsrc[s];
       if (S.groups) for (const g of S.groups) { const w = set.has(stripSrc(s, g.username)); if (w !== g.watched) { g.watched = w; delete g.state; delete g.error; } }
@@ -782,16 +914,16 @@ async function saveGroups() {
     }
   } catch (e) { gsrc[src].error = { kind: "save", message: e.message }; }
   saving = false; renderTabs(); renderGroupSelect(); renderGroups();
-  for (const s of Object.keys(SRC)) if (patch[SRC[s].key] && !pending[s] && gsrc[s].groups) loadGroups(s);
+  for (const s of sourceKeys()) if (patch[SRC[s].key] && !pending[s] && gsrc[s].groups) loadGroups(s);
 }
-function undoGroups() { for (const s of Object.keys(SRC)) pending[s] = null; renderTabs(); renderGroups(); }
+function undoGroups() { for (const s of sourceKeys()) pending[s] = null; renderTabs(); renderGroups(); }
 $("#gsave").onclick = saveGroups;
 $("#gundo").onclick = undoGroups;
 // 喊单人页的群筛选：两个来源已选的群都列出来（前缀区分来源，值保留 feishu:）；名字没加载到就先用 ID
 function renderGroupSelect() {
   const sel = $("#sgroup"), cur = sel.value;
   sel.replaceChildren(new Option("全部", ""));
-  for (const s of Object.keys(SRC)) for (const id of selectedIds(s)) {
+  for (const s of sourceKeys()) for (const id of selectedIds(s)) {
     const u = SRC[s].prefix + id, g = gsrc[s].groups?.find((g) => g.username === u);
     sel.add(new Option(`${SRC[s].label} · ${g?.displayName || id}`, u));
   }
@@ -800,7 +932,7 @@ function renderGroupSelect() {
 document.querySelectorAll("#gtabs button").forEach((b) => b.onclick = () => setSource(b.dataset.src));
 $("#gtabs").onkeydown = (e) => {
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-  const keys = Object.keys(SRC), i = keys.indexOf(src), next = keys[(i + (e.key === "ArrowRight" ? 1 : keys.length - 1)) % keys.length];
+  const keys = sourceKeys(), i = keys.indexOf(src), next = keys[(i + (e.key === "ArrowRight" ? 1 : keys.length - 1)) % keys.length];
   setSource(next); $(`#gtabs button[data-src="${next}"]`).focus(); e.preventDefault();
 };
 $("#grefresh").onclick = () => {
@@ -970,7 +1102,7 @@ function pushPanel(patch) {
     settingsVersion++;
     try {
       settings = await putSettings(body);
-      // 宽高按服务端夹过的值回填（280–600 / 300–1400）；滑块不回填，免得和手上的拖动打架
+      // 宽高按服务端夹过的值回填（范围见 /api/sources 的 panelLimits）；滑块不回填，免得和手上的拖动打架
       $("#pw").value = settings.panel.width; $("#ph").value = settings.panel.height;
       $("#sstat").textContent = "已生效 " + new Date().toLocaleTimeString();
     } catch (e) { $("#sstat").textContent = "失败: " + e.message; }
@@ -979,12 +1111,78 @@ function pushPanel(patch) {
   panelInflight = send();
 }
 async function loadSettings() {
+  loadAutoStart();
   await loadSettingsData();
   $("#pw").value = settings.panel.width; $("#ph").value = settings.panel.height;
   $("#po").value = Math.round((settings.panel.backgroundOpacity ?? 1) * 100); $("#poValue").textContent = $("#po").value + "%";
+  $("#popup-mode").value = settings.popup?.mode || "card"; $("#popup-seconds").value = settings.popup?.seconds ?? 6; $("#popup-seconds").disabled = $("#popup-mode").value !== "card";
+  qqDraft = null; qqMsg = null; renderQQSettings();
 }
 $("#po").oninput = () => { $("#poValue").textContent = $("#po").value + "%"; pushPanel({ backgroundOpacity: Number($("#po").value) / 100 }); };
 $("#pw").onchange = () => pushPanel({ width: Number($("#pw").value) });
+// QQ OneBot 连接表单：引导卡和设置页共用一份草稿（群组页轮询会重建节点，输入值留在外面）
+let qqDraft = null, qqBusy = false, qqMsg = null;
+function qqForm(rerender) {
+  const cur = settings?.qq || { enabled: false, url: "", token: "" };
+  if (!qqDraft) qqDraft = { url: cur.url, token: cur.token };
+  const box = el("div", "qqform"), kv = el("div", "kv");
+  const url = el("input"); url.type = "text"; url.placeholder = "ws://127.0.0.1:8080（默认）"; url.spellcheck = false; url.autocomplete = "off";
+  url.value = qqDraft.url; url.disabled = qqBusy; url.oninput = () => { qqDraft.url = url.value; };
+  const tok = el("input"); tok.type = "password"; tok.placeholder = "桥接端没设 Token 就留空"; tok.autocomplete = "off";
+  tok.value = qqDraft.token; tok.disabled = qqBusy; tok.oninput = () => { qqDraft.token = tok.value; };
+  const wrap = (n) => { const d = el("div"); d.append(n); return d; };
+  kv.append(el("label", null, "OneBot 地址"), wrap(url), el("label", null, "Token"), wrap(tok));
+  const row = el("div", "row2"); row.style.cssText = "display:flex;gap:8px;align-items:center;margin-top:12px";
+  const save = el("button", "act", qqBusy ? "连接中…" : cur.enabled ? "保存并重连" : "启用 QQ 监听"); save.type = "button"; save.style.marginTop = "0";
+  save.disabled = qqBusy || !settings; save.onclick = () => saveQQ(true, rerender);
+  row.append(save);
+  if (cur.enabled) { const off = el("button", "ghost", "停用"); off.type = "button"; off.disabled = qqBusy; off.onclick = () => saveQQ(false, rerender); row.append(off); }
+  box.append(kv, row);
+  if (qqMsg) box.append(el("div", qqMsg.err ? "prog err" : "hint", qqMsg.text));
+  return box;
+}
+async function saveQQ(enabled, rerender) {
+  if (qqBusy || !settings) return;
+  qqBusy = true; qqMsg = null; rerender();
+  try {
+    settingsVersion++;
+    settings = await putSettings({ qq: { enabled, url: qqDraft.url.trim(), token: qqDraft.token.trim() } });
+    qqDraft = null;
+    if (enabled) {
+      sources = await api("/api/sources/qq/reconnect", { method: "POST" });
+      qqMsg = sources.qq?.ready ? { err: false, text: "QQ 已连接，去「群组 → QQ」勾选要监听的群" } : { err: true, text: `还没连上：${sources.qq?.error || "确认 NapCat 正在运行、地址正确"}` };
+    } else {
+      qqMsg = { err: false, text: settings.qqGroups.length ? "已停用；已勾选的 QQ 群仍会继续监听，取消勾选并保存后断开" : "已停用 QQ 监听" };
+    }
+  } catch (e) { qqMsg = { err: true, text: e.message }; }
+  qqBusy = false;
+  renderTabs(); renderGroups(); rerender();
+}
+function renderQQSettings() { const box = $("#qq-settings"); box.replaceChildren(qqForm(renderQQSettings)); }
+
+// 新币提醒方式（Windows 壳读 settings.popup）
+async function savePopup(patch) {
+  settingsVersion++;
+  try { settings = await putSettings({ popup: patch }); $("#popup-seconds").value = settings.popup.seconds; $("#popup-stat").textContent = "已生效 " + new Date().toLocaleTimeString(); }
+  catch (e) { $("#popup-stat").textContent = "失败: " + e.message; }
+}
+$("#popup-mode").onchange = () => { $("#popup-seconds").disabled = $("#popup-mode").value !== "card"; savePopup({ mode: $("#popup-mode").value }); };
+$("#popup-seconds").onchange = () => savePopup({ seconds: Number($("#popup-seconds").value) });
+
+// 开机自启只有 Windows 壳（dashboard-preload 注入 fomomoNative）才有；浏览器 / macOS 壳里整块不显示
+async function loadAutoStart(value) {
+  const box = $("#autostart"), sub = $("#autostart-sub");
+  if (!window.fomomoNative?.autoStart) return;
+  $("#sys-form").hidden = false;
+  box.disabled = true;
+  try {
+    const st = await window.fomomoNative.autoStart(value);
+    box.checked = st.enabled;
+    box.disabled = !st.supported;
+    sub.textContent = st.supported ? "登录 Windows 后自动在后台开始监听" : "开发模式下不可用，请用打包后的程序";
+  } catch (e) { sub.textContent = "读取失败: " + e.message; }
+}
+$("#autostart").onchange = () => loadAutoStart($("#autostart").checked);
 $("#ph").onchange = () => pushPanel({ height: Number($("#ph").value) });
 
 // 启动只拉设置 + 来源就绪态（就绪的当前来源随之加载群）；飞书等切到它的 tab 再懒加载，不拖慢总览
@@ -999,7 +1197,7 @@ const stake = () => Math.max(1, Number($("#bstake").value) || 100);
 const money = (v) => (v < 0 ? "−" : "+") + "$" + Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
 const signCls = (v) => v > 0 ? "up" : v < 0 ? "down" : "";
 /** 现倍 → 状态：归零（≤0.1× 或流动性 <$1K）/ 翻倍 / 盈利 / 亏损 / 未定价 */
-const outcome = (c) => c.nowX == null ? ["未定价", "dim"] : (c.nowX <= 0.1 || (c.nowLiq != null && c.nowLiq < 1000)) ? ["归零", "bad"] : c.nowX >= 2 ? ["翻倍", "ok"] : c.nowX >= 1 ? ["盈利", "ok"] : ["亏损", "bad"];
+const outcome = (c) => c.nowX == null ? ["未定价", "dim"] : (c.nowX <= 0.1 || (c.nowLiq != null && c.nowLiq > 0 && c.nowLiq < 1000)) ? ["归零", "bad"] : c.nowX >= 2 ? ["翻倍", "ok"] : c.nowX >= 1 ? ["盈利", "ok"] : ["亏损", "bad"];
 async function loadBattle() {
   bt = await api(`/api/report?hours=${bHours}`);
   renderBattle();

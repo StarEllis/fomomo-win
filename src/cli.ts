@@ -1,6 +1,7 @@
 import { FeishuMonitor } from "./feishu/watch.js";
 import type { GroupMsg, MonitorEvent } from "./core/messages.js";
 import { Engine } from "./core/engine.js";
+import { Honeypot } from "./core/honeypot.js";
 import { Bridge } from "./core/rpc.js";
 import { startServer } from "./core/server.js";
 import { okxCheck, rpcConfig, tradeConfig, walletInit, walletShow } from "./core/setup.js";
@@ -11,6 +12,7 @@ import { BurnerWallet, KeychainStore } from "./core/wallet.js";
 import { Store } from "./core/store.js";
 import { WatchManager } from "./core/watchers.js";
 import { WechatReader } from "./wechat/reader.js";
+import { QQMonitor } from "./qq/watch.js";
 
 /** 启动回灌小时数（原来是设置项，2026-09-10 用户「去掉回灌可选项」→ 固定；调试用 --since 覆盖） */
 const BACKFILL_HOURS = 6;
@@ -71,16 +73,21 @@ async function main() {
 
     const bridge = new Bridge();
     const store = new Store(flags.db);
+    // Windows 首版是飞书只读交付：macOS 的 Keychain/交易链路不在 Windows
+    // 构建里宣称可用。保留原交易实现供 macOS 使用，Windows 明确传 null，
+    // 这样不会在用户没有配置钱包时偷偷触发签名或余额请求。
+    const windowsFeishu = process.platform === "win32" || process.env.FOMOMO_WINDOWS_FEISHU === "1";
+    const tradeEnabled = !windowsFeishu;
     // 交易模块的外部依赖：OKX 只经固定的接口端点（本机不持有凭据），本机 Keychain 只放 burner 私钥；原生币美元价（显示 / 限额）由 DexScreener 后台拉
     const keychain = new KeychainStore();
     const nativePrices = new NativePriceFeed();
-    const engine = new Engine(store, bridge, {}, {
+    const engine = new Engine(store, bridge, {}, tradeEnabled ? {
       okx: () => new OkxClient(),
       wallet: (rpc) => BurnerWallet.load(keychain, rpcConfig(rpc)),
       createWallet: (rpc) => BurnerWallet.create(keychain, rpcConfig(rpc)),
       nativePrices,
-    });
-    nativePrices.start();
+    } : null, Honeypot.check);
+    if (tradeEnabled) nativePrices.start();
     engine.start();
 
     // 群列表来自设置（dashboard 可改）；--group 只是调试时临时加一个
@@ -107,37 +114,63 @@ async function main() {
     };
     const watchers = new WatchManager(sinceTs, onMsg, (e, group) => onEvent(e.t === "error" ? { t: "error", message: `${group}: ${e.message}` } : e));
     const feishu = new FeishuMonitor(sinceTs, onMsg, onEvent);
+    const qq = new QQMonitor(sinceTs, onMsg, onEvent);
+    qq.configure(settings.qq);
     const emitGroups = () => bridge.emit({
       t: "ready",
       groups: [
         ...settings.groups.map((u) => ({ username: u, displayName: watchers.displayName(u) })),
         ...settings.feishuGroups.map((id) => ({ username: `feishu:${id}`, displayName: `飞书 · ${feishu.displayName(id)}` })),
+        ...settings.qqGroups.map((id) => ({ username: `qq:${id}`, displayName: `QQ · ${qq.displayName(id)}` })),
       ],
       since: sinceTs,
     });
     // 群来源就绪态：Swift 在首启（没弹过引导且一个群都没选）或没有任何来源就绪时自动打开 dashboard 群组页，
     // 所以要等 dashboard URL 发出后再起；firstRun 只在第一条 sources 上为 true，发完即落库
-    let firstRun = !store.onboarded && settings.groups.length === 0 && settings.feishuGroups.length === 0;
-    const sources = new Sources((s) => {
-      bridge.emit({ t: "sources", configured: s.configured, firstRun, wechat: { ready: s.wechat.ready }, feishu: { ready: s.feishu.ready } });
-      if (firstRun) {
-        store.markOnboarded();
-        firstRun = false;
-      }
-    });
+    let firstRun = !store.onboarded && settings.groups.length === 0 && settings.feishuGroups.length === 0 && settings.qqGroups.length === 0;
+    const sources = new Sources(
+      (s) => {
+        bridge.emit({ t: "sources", configured: s.configured, firstRun, wechat: { ready: s.wechat.ready }, feishu: { ready: s.feishu.ready }, qq: { ready: s.qq.ready } });
+        if (firstRun) {
+          store.markOnboarded();
+          firstRun = false;
+        }
+      },
+      {
+        health: () => ({ wechat: watchers.health(), feishu: feishu.health(), qq: qq.health() }),
+        // 顺带 probe：NapCat 比 Fomomo 后起、或中途重启过，界面轮询状态时就自动接上了
+        qq: () => { qq.probe(); return qq.status(); },
+      },
+    );
+    // 已选群的监听异常汇总：变了才推，Windows 悬浮窗底栏据此提示「飞书 N 个群异常」
+    let lastHealth = "[]";
+    const healthTimer = setInterval(() => {
+      if (stopping) return;
+      const all = { wechat: watchers.health(), feishu: feishu.health(), qq: qq.health() };
+      const items = (Object.keys(all) as Array<keyof typeof all>)
+        .filter((source) => all[source].watching > 0 && all[source].failing > 0)
+        .map((source) => ({ source, failing: all[source].failing, error: all[source].error }));
+      const key = JSON.stringify(items);
+      if (key === lastHealth) return;
+      lastHealth = key;
+      bridge.emit({ t: "source_health", items });
+    }, 5_000);
     shutdown = async () => {
+      clearInterval(healthTimer);
       engine.close();
-      nativePrices.close();
+      if (tradeEnabled) nativePrices.close();
       watchers.stop();
+      await qq.stop();
       sources.stop();
       await feishu.stop();
     };
     engine.readContext = (group, ts, before, after) => group.startsWith("feishu:")
       ? feishu.readAround(group, ts, before, after)
-      : watchers.readAround(group, ts, before, after);
+      : group.startsWith("qq:") ? qq.readAround(group, ts, before, after) : watchers.readAround(group, ts, before, after);
     setTimeout(() => { if (!stopping) engine.prefetchContexts(); }, 8_000);
     watchers.startInitial(settings.groups);
     feishu.sync(settings.feishuGroups, true);
+    qq.sync(settings.qqGroups, true);
     emitGroups();
     bridge.emit({ t: "settings", settings });
 
@@ -161,12 +194,15 @@ async function main() {
         engine,
         watchers,
         feishu,
+        qq,
         sources,
         onSettings: (s) => {
           const tradeChanged = JSON.stringify(s.trade) !== JSON.stringify(settings.trade);
           settings = s;
           watchers.sync(s.groups);
           feishu.sync(s.feishuGroups);
+          qq.sync(s.qqGroups);
+          qq.configure(s.qq);
           bridge.emit({ t: "settings", settings: s });
           emitGroups();
           if (tradeChanged) void engine.trade?.settingsChanged();

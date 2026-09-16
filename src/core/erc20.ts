@@ -59,9 +59,10 @@ export const Erc20 = {
   /**
    * 先探 `chainHint`（命中即返回，不再问其它链），否则按 CHAINS 顺序逐链探测；hint 只是优先级，不是权威——
    * 行情源标错链的币在别的链上照样能被认成 ERC20，而否定必须五链全确认。
-   * 非 EVM 地址、非空但不在支持表里的 hint（sol / 未配置链）→ `unknown`：不假装查过没配置的链。
+   * Solana 地址（base58）走 probeSolana；其它非 EVM 地址、非空但不在支持表里的 hint（未配置链）→ `unknown`：不假装查过没配置的链。
    */
   async check(address: string, chainHint: string | null = null, rpcBase?: string): Promise<Erc20Verdict> {
+    if (typeof address === "string" && SOL_ADDRESS.test(address)) return probeSolana(address, rpcBase);
     if (typeof address !== "string" || !EVM_ADDRESS.test(address)) return "unknown";
     const hinted = chainHint === null ? null : (CHAINS.find((c) => c.slug === chainHint) ?? null);
     if (chainHint !== null && hinted === null) return "unknown";
@@ -75,6 +76,28 @@ export const Erc20 = {
     return negatives === CHAINS.length ? "non-erc20" : "unknown";
   },
 };
+
+const SOL_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const SOL_RPC = "https://api.mainnet-beta.solana.com";
+const SOL_TOKEN_PROGRAMS = new Set(["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]);
+
+/**
+ * Solana 版三态（结论沿用 Erc20Verdict：`erc20` 在这里就是「是代币」）：`getAccountInfo` 由 Token / Token-2022 程序持有且解析为 mint → 是代币；
+ * 账户不存在、钱包 / 程序、代币账户（type=account）→ 确定不是；节点错误 / 形状不对 → unknown（绝不把 RPC 故障当否定）
+ */
+async function probeSolana(address: string, rpcBase?: string): Promise<Erc20Verdict> {
+  const url = rpcBase ? `${rpcBase}/sol` : SOL_RPC;
+  const r = await rpc(url, "getAccountInfo", [address, { encoding: "jsonParsed", commitment: "confirmed" }]);
+  if (r.kind !== "result" || r.value === null || typeof r.value !== "object") {
+    console.error(`[erc20] sol ${address.slice(0, 10)}: ${r.kind === "unavailable" ? r.why : "malformed result"}`);
+    return "unknown";
+  }
+  const value = at(r.value, "value");
+  if (value === null) return "non-erc20";
+  const owner = at(value, "owner");
+  if (value === undefined || typeof owner !== "string") return "unknown";
+  return SOL_TOKEN_PROGRAMS.has(owner) && at(at(at(value, "data"), "parsed"), "type") === "mint" ? "erc20" : "non-erc20";
+}
 
 /** 单链三态：chainId 对不上 → unknown（节点被错路由时的否定不可信）；EOA 直接否定不再 eth_call；三问任一确定否定即否定，全合法即肯定 */
 async function probeChain(chain: Chain, address: string, rpcBase?: string): Promise<Erc20Verdict> {

@@ -1,6 +1,7 @@
 import { Chain, Dex } from "./dex.js";
 import { Erc20, type Erc20Verdict } from "./erc20.js";
 import { FomoService } from "./fomo.js";
+import type { HoneypotCheck } from "./honeypot.js";
 import { GMGN_BATCH, GmgnError, RESOLUTION_SEC, candles, communityMessages, fullInfo, linkPreview, tokenInfo, topHolders, tweets, userProfile, type Candle, type GmgnCallsPage } from "./gmgn.js";
 import { GmgnWs, type Trade } from "./gmgnws.js";
 import type { Bridge } from "./rpc.js";
@@ -10,6 +11,7 @@ import { DEFAULT_SETTINGS, type FomoView, type GmgnCall, type GmgnCallsEvent, ty
 import { TradeService, type TradeDeps } from "./trade.js";
 import { fetchTweet, parseTwitterLink } from "./twitter.js";
 import { CONTEXT_AFTER, CONTEXT_BEFORE, type ContextRow, type GroupMsg, type MonitorEvent } from "./messages.js";
+import { isSolanaAddress } from "../wechat/extract.js";
 
 const MAX_TOKENS = 80;
 /** 内存里每个代币最多保留的采样点。超出时按时间均匀抽稀（不是砍最旧的）：K 线要覆盖"自喊单起"的整个跨度 */
@@ -31,10 +33,13 @@ export const ERC20_TTL = 10 * 60;
 const ERC20_UNKNOWN_TTL = 60;
 /** 同时在飞的 ERC20 探测数（每个探测只读最多五条链） */
 const ERC20_CONCURRENCY = 3;
+/** 貔貅探测（honeypot.ts）多久复查：貔貅留 24h（GoPlus 可能纠错）、正常 6h（项目方可以事后改税）、unknown 10min */
+const HONEYPOT_TTL = { honeypot: 24 * 3600, ok: 6 * 3600, unknown: 10 * 60 } as const;
+const HONEYPOT_CONCURRENCY = 2;
 
 /** gmgn 链 slug → fomo.family 路由段（fomo 前端 `chains-v2` 的 chainId→slug 表：solana/base/monad/bnb/ethereum/robinhood）。
- *  只列 EVM 链：extract 只抽 0x 地址且小写归一，Solana 的 base58 mint 区分大小写，进不来也拼不对 */
-const FOMO_CHAINS: Record<string, string> = { base: "base", bsc: "bnb", eth: "ethereum", robinhood: "robinhood" };
+ *  Solana mint 区分大小写，地址全程按原样保留（Engine.norm 只对 0x 小写） */
+const FOMO_CHAINS: Record<string, string> = { base: "base", bsc: "bnb", eth: "ethereum", robinhood: "robinhood", sol: "solana" };
 
 function fomoURL(chain: string | null, address: string): string | null {
   const slug = chain ? FOMO_CHAINS[chain] : undefined;
@@ -163,6 +168,8 @@ export class Engine {
     fomoEndpoints: { apiBase?: string; wsUrl?: string } = {},
     /** 交易模块的外部依赖（OKX 客户端工厂 / Keychain 钱包）；cli.ts 组装，测试可注入假实现或省略 */
     tradeDeps: Pick<TradeDeps, "okx" | "wallet" | "createWallet" | "nativePrices" | "now" | "timing"> | null = null,
+    /** 貔貅探测（cli.ts 传 Honeypot.check）；null = 不探测（测试默认不打外网） */
+    private readonly honeypotCheck: HoneypotCheck | null = null,
   ) {
     this.ws.onTrade = (tr) => this.onTrade(tr);
     this.fomo = new FomoService(store, bridge, {
@@ -212,6 +219,7 @@ export class Engine {
         else if ((t.official.length === 0 || !t.profile) && t.links.twitter && t.tweetsAt) void this.refreshOfficial(t).then(() => { this.store.upsertToken(t); this.scheduleState(); });
       }
     }
+    this.probeHoneypots();
     this.refreshTimer = setInterval(() => void this.refreshAll(), REFRESH_EVERY_MS);
     this.fomo.start();
     void this.trade?.start();
@@ -223,6 +231,7 @@ export class Engine {
   close(): void {
     this.closed = true;
     this.erc20Queue = [];
+    this.honeypotQueue = [];
     clearInterval(this.refreshTimer);
     this.refreshTimer = undefined;
     clearTimeout(this.flushTimer ?? undefined);
@@ -247,6 +256,7 @@ export class Engine {
   }
 
   private hidden(t: TokenState): boolean {
+    if (t.honeypotCheck?.verdict === "honeypot") return true;
     const c = t.erc20Check;
     return t.market === null && c?.verdict === "non-erc20" && now() >= c.checkedAt && now() - c.checkedAt < ERC20_TTL;
   }
@@ -297,7 +307,7 @@ export class Engine {
   private lookup(address: string, chain: string | null): TokenState | undefined {
     const f = this.focused;
     if (!chain && f?.address === Engine.norm(address)) return f;
-    const t = this.tokens[this.index.get(address.toLowerCase()) ?? -1];
+    const t = this.tokens[this.index.get(Engine.norm(address)) ?? -1];
     if (t && (!chain || !t.market?.chain || t.market.chain === chain)) return t;
     if (chain) return this.holdings.get(Engine.holdingKey(address, chain));
     return undefined;
@@ -308,7 +318,13 @@ export class Engine {
     const key = Engine.holdingKey(address, chain ?? "?");
     let t = this.holdings.get(key);
     if (t) this.holdings.delete(key); // 重新插到末尾 = 最近用过
-    else t = { address: Engine.norm(address), chainHint: chain, market: null, mentions: [], history: [], links: null, ath: null, profile: null, official: [], tweets: [], tweetsAt: 0 };
+    else {
+      // 追踪列表只留最近 MAX_TOKENS 个：更早被喊过的（dashboard 点开）从库里带上喊单 / 采样 / 社交，链对得上才用
+      const stored = this.store.loadToken(Engine.norm(address), MAX_HISTORY);
+      t = stored && (!chain || (stored.market?.chain ?? stored.chainHint) === chain)
+        ? { ...stored, chainHint: chain ?? stored.market?.chain ?? stored.chainHint }
+        : { address: Engine.norm(address), chainHint: chain, market: null, mentions: [], history: [], links: null, ath: null, profile: null, official: [], tweets: [], tweetsAt: 0 };
+    }
     this.holdings.set(key, t);
     for (const k of this.holdings.keys()) {
       if (this.holdings.size <= Engine.MAX_HOLDINGS) break;
@@ -338,10 +354,12 @@ export class Engine {
 
   ingest(e: GroupMsg): void {
     for (const a of e.addrs) {
+      const address = Engine.norm(a);
       this.ingestOne(
-        a.toLowerCase(),
+        address,
         { sender: e.sender || "?", time: e.time, text: e.text, group: e.group, approx: false },
-        e.chainHint,
+        // Solana 地址（base58）本身就说明链；群消息里的链提示只对 EVM 地址有意义
+        isSolanaAddress(address) ? "sol" : e.chainHint,
         e.backfill,
       );
     }
@@ -458,6 +476,7 @@ export class Engine {
         if (t && t.chainHint === hint) this.marketTried.add(t);
       }
       this.probeUnresolved();
+      this.probeHoneypots();
     }
   }
 
@@ -507,6 +526,7 @@ export class Engine {
     } finally {
       this.refreshing = false;
       this.probeUnresolved();
+      this.probeHoneypots();
     }
   }
 
@@ -517,9 +537,9 @@ export class Engine {
   private erc20Queue: TokenState[] = [];
   private erc20Active = 0;
 
-  /** 该代币需要（重新）探测：追踪中、行情仍空、EVM 地址、没结论或结论过期 */
+  /** 该代币需要（重新）探测：追踪中、行情仍空、没结论或结论过期（EVM 查 ERC20，Solana 查 SPL mint，见 erc20.ts） */
   private erc20Due(t: TokenState): boolean {
-    if (t.market || !this.marketTried.has(t) || !t.address.startsWith("0x")) return false;
+    if (t.market || !this.marketTried.has(t)) return false;
     const c = t.erc20Check;
     return !c || now() < c.checkedAt || now() - c.checkedAt >= (c.verdict === "unknown" ? ERC20_UNKNOWN_TTL : ERC20_TTL);
   }
@@ -575,6 +595,55 @@ export class Engine {
     if (isHidden !== wasHidden) console.error(`[erc20] ${t.address.slice(0, 10)} ${verdict} → ${isHidden ? "hidden" : "shown"}`);
     if (isHidden && !wasHidden) this.emitAfterState({ t: "token_hidden", address: t.address });
     else this.scheduleState(); // 过期的隐藏结论变为 unknown/erc20 时也要把行推回原生，不只更新 views()
+  }
+
+  // ---------- 貔貅探测（行情确认了链之后） ----------
+
+  private honeypotQueued = new WeakSet<TokenState>();
+  private honeypotQueue: TokenState[] = [];
+  private honeypotActive = 0;
+
+  private honeypotDue(t: TokenState): boolean {
+    if (!this.honeypotCheck || !t.market?.chain) return false;
+    const c = t.honeypotCheck;
+    return !c || now() < c.checkedAt || now() - c.checkedAt >= HONEYPOT_TTL[c.verdict];
+  }
+
+  /** 每轮行情之后：追踪列表里链已确认、没结论或结论过期的排进队列 */
+  private probeHoneypots(): void {
+    if (this.closed) return;
+    for (const t of this.tokens) {
+      if (this.honeypotQueued.has(t) || !this.honeypotDue(t)) continue;
+      this.honeypotQueued.add(t);
+      this.honeypotQueue.push(t);
+    }
+    while (this.honeypotActive < HONEYPOT_CONCURRENCY && this.honeypotQueue.length > 0) {
+      const t = this.honeypotQueue.shift()!;
+      if (!this.isTracked(t) || !this.honeypotDue(t)) {
+        this.honeypotQueued.delete(t);
+        continue;
+      }
+      this.honeypotActive++;
+      void this.probeHoneypot(t).finally(() => {
+        this.honeypotActive--;
+        this.honeypotQueued.delete(t);
+        this.probeHoneypots();
+      });
+    }
+  }
+
+  /** 结论落地（引擎已关 / 代币已不在列表 → 作废）；只在「显示 → 隐藏」时发 token_hidden，收掉它的弹卡 */
+  private async probeHoneypot(t: TokenState): Promise<void> {
+    const chain = t.market!.chain!;
+    const verdict = await this.honeypotCheck!(t.address, chain);
+    if (this.closed || !this.isTracked(t) || t.market?.chain !== chain) return;
+    const wasHidden = this.hidden(t);
+    t.honeypotCheck = { verdict, checkedAt: now() };
+    this.store.upsertToken(t);
+    const isHidden = this.hidden(t);
+    if (isHidden !== wasHidden) console.error(`[honeypot] ${t.market?.symbol ?? t.address.slice(0, 10)} ${chain} ${verdict} → ${isHidden ? "hidden" : "shown"}`);
+    if (isHidden && !wasHidden) this.emitAfterState({ t: "token_hidden", address: t.address });
+    else if (isHidden !== wasHidden) this.scheduleState();
   }
 
   /** 返回成功更新的地址集合 */
@@ -957,7 +1026,7 @@ export class Engine {
   ingestContext(e: Extract<MonitorEvent, { t: "context" }>): void {
     if (this.closed) return;
     for (const raw of e.msg.addrs) {
-      const address = raw.toLowerCase();
+      const address = Engine.norm(raw);
       this.saveContext(address, { sender: e.msg.sender, time: e.msg.time, group: e.msg.group }, e.rows, e.call);
       const key = Engine.ctxKey(address, e.msg.sender, e.msg.time, e.msg.group);
       const cached = this.contexts.get(key);
@@ -1029,9 +1098,8 @@ export class Engine {
 
   /** Swift 点了 K 线上的喊单标记 */
   context(address: string, sender: string, ts: number, group: string): void {
-    const i = this.index.get(address.toLowerCase());
-    if (i === undefined) return;
-    const t = this.tokens[i];
+    const t = this.lookup(address, null);
+    if (!t) return;
     const m = t.mentions.find((x) => x.time === ts && x.sender === sender && x.group === group);
     if (m) this.pushContext(t, m);
   }
@@ -1195,7 +1263,7 @@ export class Engine {
 
   /** Swift 主面板显示行全集变了（LazyVStack 出现 / 折叠 → []）：交给 FomoService 的串行前排队列；焦点币仍走 focus() 的立即路径 */
   frontRankVisible(addresses: string[]): void {
-    this.visible = new Set(addresses.map((a) => a.toLowerCase()));
+    this.visible = new Set(addresses.map((a) => Engine.norm(a)));
     this.fomo.visibleChanged([...this.visible]);
   }
 

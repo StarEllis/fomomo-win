@@ -10,7 +10,8 @@ export interface Proxy {
 }
 
 /**
- * 出站 HTTP 代理：环境变量（HTTPS_PROXY / ALL_PROXY）优先，否则 macOS 系统代理（`scutil --proxy`，即 WKWebView 走的那一个）。
+ * 出站 HTTP 代理：环境变量（HTTPS_PROXY / ALL_PROXY）优先，否则读取
+ * macOS 系统代理（`scutil --proxy`）或 Windows WinINET 用户代理设置。
  * 本机系统 DNS 把 gmgn.ai / ws.gmgn.ai 解析成 0.0.0.0、api.dexscreener.com 解析成投毒 IP（2026-09-05 `dig` 实证），直连 ECONNREFUSED / 超时；
  * WKWebView 能连是因为它走系统代理由代理侧解析。Node（`ws`、fetch）都不看系统代理，所以出站请求统一从这里拿 Agent。
  * 结果缓存 30s：一次 20s 刷新会发几十个请求，不能每个都起 scutil。没有代理 → null，调用方走 Node 默认路径，行为不变。
@@ -35,6 +36,7 @@ async function detect(): Promise<Proxy | null> {
       /* 格式不对就往下看 */
     }
   }
+  if (process.platform === "win32") return windowsProxy();
   if (process.platform !== "darwin") return null;
   const { promise, resolve } = Promise.withResolvers<string>();
   execFile("scutil", ["--proxy"], (err, stdout) => resolve(err ? "" : stdout));
@@ -43,6 +45,59 @@ async function detect(): Promise<Proxy | null> {
   const host = /HTTPSProxy\s*:\s*(\S+)/.exec(out)?.[1];
   const port = Number(/HTTPSPort\s*:\s*(\d+)/.exec(out)?.[1]);
   return host && port ? { host, port } : null;
+}
+
+/**
+ * Windows desktop apps normally inherit the WinINET proxy configured under
+ * Internet Options.  Node does not consume that setting, so mirror the small
+ * subset useful to the HTTP CONNECT client here.  PAC/auto-detect is left to
+ * the user-provided HTTPS_PROXY/ALL_PROXY because resolving PAC scripts would
+ * require another network stack.
+ */
+async function windowsProxy(): Promise<Proxy | null> {
+  const key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
+  const enable = await regValue(key, "ProxyEnable");
+  if (!/\b(?:0x)?1\b/i.test(enable ?? "")) return null;
+  const server = await regValue(key, "ProxyServer");
+  if (!server) return null;
+
+  // ProxyServer may be a single host:port or a semicolon-separated mapping
+  // such as `http=127.0.0.1:7890;https=127.0.0.1:7890`.
+  const entries = server.split(";").map((x) => x.trim()).filter(Boolean);
+  const preferred = entries.find((x) => /^https?=/i.test(x)) ?? entries[0];
+  const value = (preferred.includes("=") ? preferred.slice(preferred.indexOf("=") + 1) : preferred).trim();
+  if (!value || /^socks/i.test(value)) return null;
+  try {
+    const u = new URL(value.includes("://") ? value : `http://${value}`);
+    const port = Number(u.port) || 80;
+    return u.hostname && Number.isFinite(port) ? { host: u.hostname, port } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 本机回环地址（测试 fixture / FOMOMO_*_BASE 调试端点）永远直连：系统代理不会替你转发到你自己的 127.0.0.1 */
+export function isLoopback(url: string): boolean {
+  try {
+    const h = new URL(url).hostname;
+    return h === "localhost" || h === "[::1]" || /^127\./.test(h);
+  } catch {
+    return false;
+  }
+}
+
+function regValue(key: string, name: string): Promise<string | null> {
+  const { promise, resolve } = Promise.withResolvers<string | null>();
+  execFile("reg.exe", ["query", key, "/v", name], { encoding: "utf8", windowsHide: true }, (err, stdout) => {
+    if (err) return resolve(null);
+    // `reg query` is localized only in the heading; the value line still has
+    // the stable `REG_DWORD` / `REG_SZ` type token.
+    const line = stdout.split(/\r?\n/).find((l) => new RegExp(`\\b${name}\\b`, "i").test(l));
+    if (!line) return resolve(null);
+    const m = line.match(/\b(?:REG_DWORD|REG_SZ|REG_EXPAND_SZ)\s+(.+?)\s*$/i);
+    resolve(m?.[1]?.trim() ?? null);
+  });
+  return promise;
 }
 
 /** 经 HTTP 代理 CONNECT 隧道再握 TLS 的 Agent（给 `ws` 和 https.request 用；不引第三方 proxy-agent） */

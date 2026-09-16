@@ -1,4 +1,4 @@
-import { CONTEXT_AFTER, CONTEXT_BEFORE, RECENT_BACKFILL, type ContextRow, type GroupMsg, type GroupSummary, type MonitorEvent } from "../core/messages.js";
+import { CONTEXT_AFTER, CONTEXT_BEFORE, RECENT_BACKFILL, type ContextRow, type GroupMsg, type GroupSummary, type MonitorEvent, type SourceHealth } from "../core/messages.js";
 import { LarkCliClient, LarkError, type FeishuTransport, type RawChat, type RawMessage } from "./client.js";
 import { extractFromMessage, renderContent, senderName } from "./content.js";
 
@@ -137,6 +137,44 @@ export class FeishuMonitor {
     if (needNames) void this.loadChats(false).catch(() => undefined);
     this.ensureWorker();
     this.wake();
+  }
+
+  health(): SourceHealth {
+    let failing = 0;
+    let error: string | null = null;
+    for (const g of this.groups.values()) {
+      if (g.state !== "error") continue;
+      failing++;
+      error ??= `${this.displayName(g.id)}: ${g.error ?? "拉取失败"}`;
+    }
+    // 限流是全局的，不算某个群异常，但用户该知道为什么半天不更新
+    if (!error && this.pausedUntil > Date.now()) error = `飞书限流中，约 ${Math.ceil((this.pausedUntil - Date.now()) / 1000)}s 后自动继续`;
+    return { watching: this.groups.size, failing, error };
+  }
+
+  /**
+   * 一键重试：异常群最长会退避到 5 分钟（未登录 / 无权限那类从 1 分钟起），用户刚修好登录时不该干等。
+   * 清掉退避与限流暂停、把异常群打回「启动中」，立刻叫醒轮询。返回被重试的群数。
+   */
+  retryNow(): number {
+    if (this.stopped) return 0;
+    this.pausedUntil = 0;
+    this.rateLimitStreak = 0;
+    this.chatsCache = null;
+    let n = 0;
+    for (const g of this.groups.values()) {
+      if (g.state !== "error") continue;
+      g.failures = 0;
+      g.nextRetryAt = 0;
+      g.state = "starting";
+      g.error = undefined;
+      n++;
+    }
+    console.error(`[feishu] retry now: ${n} group(s)`);
+    this.ensureWorker();
+    this.wake();
+    this.onEvent({ t: "groups" });
+    return n;
   }
 
   async stop(): Promise<void> {

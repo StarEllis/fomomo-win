@@ -1,6 +1,6 @@
 # fomomo
 
-macOS 桌面端「群喊单」监控悬浮窗。盯着你选定的微信 / 飞书群，群里一冒出代币合约地址就抓下来：实时行情、K 线、喊单后涨跌、谁喊的、喊了几次；新币主动弹卡；看准了可以直接在卡上一键买卖。
+桌面端「群喊单」监控悬浮窗。macOS 可盯微信 / 飞书群；Windows 首版先交付飞书来源。群里一冒出代币合约地址就抓下来：实时行情、K 线、喊单后涨跌、谁喊的、喊了几次；新币主动弹卡。macOS 版还支持本地 burner 交易，Windows 首版为只读监控。
 
 <p align="center">
   <img src="docs/screenshots/panel.png" width="300" alt="主面板：监听的代币列表与当前持仓" />
@@ -26,16 +26,46 @@ macOS 桌面端「群喊单」监控悬浮窗。盯着你选定的微信 / 飞�
 ## 环境要求
 
 - macOS 14+，Apple Silicon
+- Windows 10/11，x64（Electron；飞书来源与微信 4.x 来源均可用，交易暂不启用）
 - 读微信群：微信 macOS 4.x 已登录；提取密钥需要 Xcode 命令行工具（`xcode-select --install`，引导页里有按钮）
 - 读飞书群：不需要额外安装，`.app` 自带 lark-cli，用你本人账号在浏览器里授权一次
+
+Windows 版不读取本机微信数据库，也不会在 Windows 上生成或使用 burner 钱包；这是首个可交付范围，先保证飞书群监听、行情面板和只读统计链路稳定。
 
 ## 安装
 
 从 [Releases](https://github.com/nishuzumi/fomomo/releases) 下载 `Fomomo-<版本>-arm64.zip`，解压后把 `Fomomo.app` 拖进「应用程序」，双击打开。应用是 accessory 类型（无 Dock 图标）：左侧出现悬浮窗，状态栏有一个 `f` 图标；退出走状态栏菜单。
 
+### Windows 首版（飞书）
+
+仓库里的 Windows 构建脚本会生成 x64 安装程序（`fomomo-<版本>-win-x64-setup.exe`，可选安装目录、建桌面 / 开始菜单快捷方式）和可解压即用的便携压缩包（直接运行 `fomomo.exe`），都不需要安装 Node 或 pnpm：
+
+```powershell
+corepack pnpm install
+corepack pnpm windows:build
+```
+
+产物在 `dist/windows/`。开发调试可运行 `corepack pnpm windows:dev`；首次启动会打开群组设置，点击「创建应用并登录」，在浏览器完成飞书授权，再勾选要监听的群并保存。数据放在 `%LOCALAPPDATA%\Fomomo`（卸载不删）。悬浮窗与弹卡和 macOS 版一致：新币自动弹卡（不抢焦点，默认 6 秒后收起，点一下钉住；「设置 → 新币提醒」可改成只发系统提醒或关闭）、1s–1d K 线（滚轮缩放 / 拖动平移 / 双击复位，点喊单标记切换群聊语境）、官方推特与译文、GMGN 喊单（GMGN / X 两页签）、fomo 关注者与 Thesis。悬浮窗拖上 / 下 / 右边缘改尺寸；底栏可直达 24h 战况、打开内置 gmgn 窗口过 Cloudflare 验证、登录 fomo。
+
+开发时跑测试请用 Node 22（`.node-version`；SQLite 原生模块按 Node 22 ABI 编译）。Windows 界面测试：`corepack pnpm exec electron test/windows-ui-smoke.cjs`。图标由 `windows/assets/tray.svg` 生成：`corepack pnpm exec electron scripts/make-windows-icons.cjs`。
+
+Windows 版交易页暂不启用；微信 4.x 支持从运行中的 `Weixin.exe` 自动获取数据库密钥，失败时仍可手动粘贴 64 位密钥。自动取钥使用 CipherTalk 的 `wechat_key_tool.dll`（CC BY-NC-SA 4.0，见其许可证），只保存本机密钥，不导出聊天内容。
+
 > 未公证的构建（仓库没配 Developer ID 证书时 CI 产出的就是）首次打开会被 Gatekeeper 拦下「Apple 无法验证」：点「完成」→ 系统设置 → 隐私与安全性 → 底部「仍要打开」；或者终端 `xattr -cr /Applications/Fomomo.app`。macOS 15 起「右键 → 打开」已不再绕过。
 
 `.app` 自带 Node 22 运行时和 lark-cli，不需要装 Node / pnpm。数据（设置、喊单记录、微信密钥）在 `~/Library/Application Support/fomomo/`，日志在 `~/Library/Logs/fomomo.log`。
+
+### QQ（个人 QQ + OneBot 外接）
+
+QQ 需要一个单独的“桥接小助手”把群消息转给 Fomomo。推荐新手使用 NapCat：
+
+1. 安装并启动 [NapCat](https://napneko.github.io/)，按提示扫码登录 QQ。
+2. 在 NapCat 设置里打开「网络配置 → OneBot 11 → 正向 WebSocket」。地址填 `127.0.0.1`，端口填 `8080`，保存后让 NapCat 保持运行。
+3. 打开 Fomomo 的「群组 → QQ」，点「启用 QQ 监听」。看到“QQ 已连接”后勾选要监听的群，再点「保存」。
+
+默认地址是 `ws://127.0.0.1:8080`，一般不用改。NapCat 改过端口或启用了 Token 时，在引导卡或「设置 → QQ 连接」里填上地址 / Token 再点「保存并重连」，不需要重启 Fomomo。以前设置过的 `FOMOMO_ONEBOT_*` 环境变量仍然有效：地址 / Token 留空时沿用它们，`FOMOMO_ONEBOT_ENABLED=1` 只在界面里还没保存过 QQ 设置时视为已启用。
+
+Fomomo 只接收本机 OneBot 消息，不保存 QQ 密码。该模式依赖非官方 QQ 协议，存在掉线、版本不兼容和账号风控/封禁风险，请使用专用 QQ 号并只绑定本机 WebSocket。
 
 ### 首次启动：选一个群来源
 
