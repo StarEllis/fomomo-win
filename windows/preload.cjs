@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("fomomo", Object.freeze({
   onStatus: (callback) => subscribe("fomomo:status", callback),
   send: (event) => ipcRenderer.send("fomomo:command", event),
   openDetail: (token) => ipcRenderer.send("fomomo:open-detail", token),
+  rowMenu: (token) => ipcRenderer.send("fomomo:row-menu", token),
+  unmuteToken: (address) => ipcRenderer.send("fomomo:unmute-token", address),
   closeDetail: () => ipcRenderer.send("fomomo:close-detail"),
   pinDetail: () => ipcRenderer.send("fomomo:pin-detail"),
   openDashboard: (tab = null) => ipcRenderer.send("fomomo:open-dashboard", tab),

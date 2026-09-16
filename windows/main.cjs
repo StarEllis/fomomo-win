@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, session, shell } = require("electron");
+const { app, BrowserWindow, clipboard, ipcMain, screen, Tray, Menu, nativeImage, session, shell } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -315,16 +315,53 @@ function popupSettings() {
   };
 }
 
+async function putSettings(patch) {
+  if (!dashboardUrl) throw new Error("数据进程还没就绪");
+  const res = await fetch(new URL("/api/settings", dashboardUrl), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 async function savePanel(patch) {
   if (!dashboardUrl) return;
   try {
-    await fetch(new URL("/api/settings", dashboardUrl), {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ panel: patch }),
-    });
+    await putSettings({ panel: patch });
   } catch (error) {
     log("panel", `悬浮窗设置保存失败: ${error.message}`);
+  }
+}
+
+/** 悬浮窗行的右键菜单（原生菜单）：详情 / 复制地址 / 外链 / 不再显示 */
+function showRowMenu(input) {
+  const token = resolveToken(input);
+  if (!token || !overlayWindow) return;
+  const chain = token.market?.chain || token.chainHint || null;
+  const symbol = token.market?.symbol || `${token.address.slice(0, 6)}…${token.address.slice(-4)}`;
+  Menu.buildFromTemplate([
+    { label: `查看 ${symbol} 详情`, click: () => showDetail(token) },
+    { label: "复制合约地址", click: () => clipboard.writeText(token.address) },
+    { type: "separator" },
+    { label: chain ? "在 GMGN 打开" : "在 GMGN 打开（链还没识别出来）", enabled: !!chain, click: () => openExternal(`https://gmgn.ai/${encodeURIComponent(chain)}/token/${encodeURIComponent(token.address)}`) },
+    { label: "在 DexScreener 搜索", click: () => openExternal(`https://dexscreener.com/search?q=${encodeURIComponent(token.address)}`) },
+    { type: "separator" },
+    { label: "不再显示此币", click: () => void setTokenMuted(token.address, true, symbol) },
+  ]).popup({ window: overlayWindow });
+}
+
+/** 隐藏 / 取消隐藏一个代币：改 settings.mutedTokens，sidecar 据此从列表里拿掉（喊单记录保留） */
+async function setTokenMuted(address, muted, symbol = "") {
+  const current = cachedEvents.get("settings")?.settings?.mutedTokens || [];
+  const next = muted ? [...current.filter((a) => a !== address), address] : current.filter((a) => a !== address);
+  try {
+    await putSettings({ mutedTokens: next });
+    if (muted) overlayWindow?.webContents.send("fomomo:event", { t: "token_muted", address, symbol });
+  } catch (error) {
+    log("mute", `${muted ? "隐藏" : "恢复"}代币失败: ${error.message}`);
+    overlayWindow?.webContents.send("fomomo:event", { t: "toast", text: `操作失败：${error.message}` });
   }
 }
 
@@ -1023,6 +1060,8 @@ function registerIpc() {
     return autoStartState();
   });
   ipcMain.on("fomomo:open-detail", (_event, token) => showDetail(token));
+  ipcMain.on("fomomo:row-menu", (_event, token) => showRowMenu(token));
+  ipcMain.on("fomomo:unmute-token", (_event, address) => { if (typeof address === "string") void setTokenMuted(address, false); });
   ipcMain.on("fomomo:close-detail", hideDetail);
   ipcMain.on("fomomo:pin-detail", pinDetail);
   ipcMain.on("fomomo:open-gmgn", showGmgnWindow);

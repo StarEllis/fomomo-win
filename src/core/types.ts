@@ -420,6 +420,8 @@ export interface Settings {
   popup: PopupSettings;
   /** QQ OneBot 连接：enabled 后才去连本机桥接；url / token 留空时回退到环境变量与默认地址 */
   qq: QQSettings;
+  /** 用户在悬浮窗里选了「不再显示」的代币地址（喊单记录照常保留，只是不上面板 / dashboard 代币页） */
+  mutedTokens: string[];
   trade: TradeSettings;
 }
 
@@ -435,6 +437,7 @@ export const DEFAULT_SETTINGS: Settings = {
   popup: { mode: "card", seconds: 6 },
   // 老用户按 README 设过 FOMOMO_ONEBOT_ENABLED=1：界面里还没存过 QQ 设置时沿用它，存过以后以界面为准
   qq: { enabled: process.env.FOMOMO_ONEBOT_ENABLED === "1", url: "", token: "" },
+  mutedTokens: [],
   trade: {
     rpc: {},
     maxUsdPerTrade: 200,

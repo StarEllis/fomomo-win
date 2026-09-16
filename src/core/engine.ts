@@ -255,7 +255,31 @@ export class Engine {
     return this.tokens.filter((t) => !this.hidden(t)).map((t) => this.view(t));
   }
 
+  /** 用户在悬浮窗里点了「不再显示」的代币（settings.mutedTokens）；记录照常保留，只是不上面板 */
+  private muted = new Set<string>();
+
+  /** 应用隐藏列表：新隐藏的发 token_hidden（收掉它的弹卡），取消隐藏的随 state 回来 */
+  setMuted(addresses: string[]): void {
+    const next = new Set(addresses.map((a) => Engine.norm(a)));
+    const was = this.muted;
+    this.muted = next;
+    let changed = false;
+    for (const t of this.tokens) {
+      const before = was.has(t.address), after = next.has(t.address);
+      if (before === after) continue;
+      changed = true;
+      // 只在「显示 → 隐藏」时发 token_hidden：原本就因为非 ERC20 / 貔貅隐藏着的不重复发
+      if (after && !this.hiddenByCheck(t)) this.emitAfterState({ t: "token_hidden", address: t.address });
+    }
+    if (changed) this.scheduleState();
+  }
+
   private hidden(t: TokenState): boolean {
+    return this.muted.has(t.address) || this.hiddenByCheck(t);
+  }
+
+  /** 探测结论导致的隐藏（貔貅 / 确认非 ERC20 且未过期） */
+  private hiddenByCheck(t: TokenState): boolean {
     if (t.honeypotCheck?.verdict === "honeypot") return true;
     const c = t.erc20Check;
     return t.market === null && c?.verdict === "non-erc20" && now() >= c.checkedAt && now() - c.checkedAt < ERC20_TTL;

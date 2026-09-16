@@ -231,6 +231,7 @@ export class Store {
       panel: { ...DEFAULT_SETTINGS.panel, ...(saved.panel ?? {}) },
       popup: { ...DEFAULT_SETTINGS.popup, ...(saved.popup ?? {}) },
       qq: { ...DEFAULT_SETTINGS.qq, ...(saved.qq ?? {}) },
+      mutedTokens: [...(saved.mutedTokens ?? DEFAULT_SETTINGS.mutedTokens)],
       trade: {
         rpc: { ...(saved.trade?.rpc ?? {}) },
         maxUsdPerTrade: saved.trade?.maxUsdPerTrade ?? DEFAULT_SETTINGS.trade.maxUsdPerTrade,

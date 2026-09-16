@@ -168,6 +168,7 @@ async function main() {
       ? feishu.readAround(group, ts, before, after)
       : group.startsWith("qq:") ? qq.readAround(group, ts, before, after) : watchers.readAround(group, ts, before, after);
     setTimeout(() => { if (!stopping) engine.prefetchContexts(); }, 8_000);
+    engine.setMuted(settings.mutedTokens);
     watchers.startInitial(settings.groups);
     feishu.sync(settings.feishuGroups, true);
     qq.sync(settings.qqGroups, true);
@@ -203,6 +204,7 @@ async function main() {
           feishu.sync(s.feishuGroups);
           qq.sync(s.qqGroups);
           qq.configure(s.qq);
+          engine.setMuted(s.mutedTokens);
           bridge.emit({ t: "settings", settings: s });
           emitGroups();
           if (tradeChanged) void engine.trade?.settingsChanged();

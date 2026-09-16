@@ -39,7 +39,7 @@
     .badge-new{font-size:9px;font-weight:800;color:var(--mint);background:rgba(57,217,151,.12);padding:1px 5px;border-radius:9px}
     .t2{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:4px}
     .addr{font-size:10.5px;color:var(--muted);padding:2px 4px;border-radius:5px}.addr:hover{background:var(--surface2)}
-    .pill{font-size:10px;font-weight:650;padding:3px 7px;border-radius:6px;background:var(--surface);border:1px solid var(--line);color:var(--muted)}.pill:hover{color:var(--ink);background:var(--surface2)}.pill.accent{color:var(--mint);border-color:rgba(57,217,151,.35)}
+    .pill{font-size:10px;font-weight:650;padding:3px 7px;border-radius:6px;background:var(--surface);border:1px solid var(--line);color:var(--muted)}.pill:hover{color:var(--ink);background:var(--surface2)}.pill.accent{color:var(--mint);border-color:rgba(57,217,151,.35)}.pill:disabled{opacity:.45;cursor:default;color:var(--muted);background:var(--surface)}
     .mcrow{display:flex;align-items:baseline;gap:8px;margin-top:9px}.mcrow .mc{font-size:17px}.mcrow .chg{font-size:11.5px}
     .stats{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px}.stat label{display:block;font-size:9px;font-weight:650;letter-spacing:.4px;color:var(--faint)}.stat b{font-size:12px;font-weight:500;white-space:nowrap}
     .deltas{display:flex;gap:12px;margin-top:6px;font-size:10px}.deltas span label{font-size:9px;font-weight:650;color:var(--faint);margin-right:3px}
@@ -151,7 +151,8 @@
       if (t.links?.website) links.push([`官网`, t.links.website]);
       if (t.links?.telegram) links.push([`TG`, t.links.telegram]);
       if (t.fomoURL) links.push([`fomo`, t.fomoURL, true]);
-      links.push([`GMGN`, `https://gmgn.ai/${encodeURIComponent(c || "robinhood")}/token/${encodeURIComponent(t.address)}`]);
+      // 链还没识别出来时不能猜链（以前默认 robinhood，BSC / SOL 币会打开错的页面），先置灰，行情到了会自动变可点
+      links.push([`GMGN`, c ? `https://gmgn.ai/${encodeURIComponent(c)}/token/${encodeURIComponent(t.address)}` : null]);
       links.push([`DEX`, `https://dexscreener.com/search?q=${encodeURIComponent(t.address)}`]);
       const f = t.fomo;
       const buyers = !f ? "—" : f.holders != null ? `${f.buyers} / ${f.holders}` : `${f.buyers} 人`;
@@ -162,7 +163,7 @@
           <div class="logo">${esc(sym.slice(0, 2))}${m.logo ? `<img src="${esc(m.logo)}" alt="" onerror="this.remove()"/>` : ""}</div>
           <div style="min-width:0;flex:1">
             <div class="t1"><h1>${esc(sym)}</h1><span class="chain">${esc(chainLabel(c))}</span><span class="name">${esc(name)}</span>${auto ? `<span class="badge-new">新</span>` : ""}</div>
-            <div class="t2"><button class="addr num" data-act="copy" title="${esc(t.address)}">${esc(shortAddr(t.address))} <span id="copied">⧉</span></button>${links.map(([l, u, a]) => `<button class="pill ${a ? "accent" : ""}" data-act="url" data-url="${esc(u)}" title="${esc(u)}">${l}</button>`).join("")}</div>
+            <div class="t2"><button class="addr num" data-act="copy" title="${esc(t.address)}">${esc(shortAddr(t.address))} <span id="copied">⧉</span></button>${links.map(([l, u, a]) => u ? `<button class="pill ${a ? "accent" : ""}" data-act="url" data-url="${esc(u)}" title="${esc(u)}">${l}</button>` : `<button class="pill" disabled title="链还没识别出来，行情到了就能打开">${l}</button>`).join("")}</div>
           </div>
         </div>
         <div class="mcrow"><span class="mc num">${compact(m.mc)}</span><span class="chg num ${chCls}">喊后 ${pct(ch, t.changeApprox)}</span></div>

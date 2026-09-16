@@ -78,6 +78,7 @@ export function startServer(deps: { store: Store; engine: Engine; watchers: Watc
           panel: sanitizePanel(patch.panel, cur.panel),
           popup: sanitizePopup(patch.popup, cur.popup),
           qq: sanitizeQQ(patch.qq, cur.qq),
+          mutedTokens: sanitizeMuted(patch.mutedTokens, cur.mutedTokens),
           trade: sanitizeTrade(patch.trade, cur.trade),
         };
         deps.store.setSettings(next);
@@ -210,6 +211,13 @@ export function sanitizeQQ(patch: Partial<QQSettings> | undefined, cur: QQSettin
     url,
     token: typeof p.token === "string" ? p.token.trim().slice(0, 512) : cur.token,
   };
+}
+
+/** 隐藏代币列表：只收像合约地址的字符串（EVM 0x40 位 / Solana base58），去重，最多 5000 个（老的先丢） */
+export function sanitizeMuted(patch: unknown, cur: string[]): string[] {
+  if (!Array.isArray(patch)) return cur;
+  const ok = patch.filter((a): a is string => typeof a === "string" && (/^0x[0-9a-fA-F]{40}$/.test(a) || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a)));
+  return [...new Set(ok)].slice(-5000);
 }
 
 export class HttpError extends Error {

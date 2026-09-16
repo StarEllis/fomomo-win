@@ -29,7 +29,10 @@
     .token-logo{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;background:#283431;color:var(--mint2);font-size:11px;font-weight:750;overflow:hidden;position:relative}.token-logo img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
     .main{min-width:0}.line1,.line2{display:flex;align-items:center;gap:6px;min-width:0}.line1 b{font-size:13.5px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.line1 .addr{font-size:12px;color:var(--muted)}
     .chain{font-size:9px;font-weight:750;line-height:16px;padding:0 5px;border-radius:5px;background:rgba(115,167,255,.14);color:#9abaff;flex:0 0 auto}
-    .line2{margin-top:3px;font-size:10.5px;white-space:nowrap}.kol{color:var(--mint)}
+    .line2{margin-top:3px;font-size:10.5px;white-space:nowrap}.kol{color:var(--mint);flex:0 0 auto}
+    .src{flex:0 0 auto;font-size:9px;line-height:14px;padding:0 4px;border-radius:4px;background:rgba(255,255,255,.07);color:var(--muted);font-family:"Segoe UI Variable","Segoe UI",system-ui,sans-serif}
+    .who{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-family:"Segoe UI Variable","Segoe UI",system-ui,sans-serif}
+    .line2 .fr{flex:0 0 auto}
     .fr-hi{color:var(--red)}.fr-mid{color:var(--orange)}.fr-lo{color:var(--amber)}.fr-min{color:var(--muted)}.fr-none{color:var(--faint)}
     .spark{width:56px;height:26px;display:block}.spark polyline{fill:none;stroke:var(--mint);stroke-width:1.6;vector-effect:non-scaling-stroke}.spark.down polyline{stroke:var(--red)}.spark.flat polyline{stroke:var(--faint);stroke-dasharray:3 3}
     .right{display:flex;flex-direction:column;align-items:flex-end;gap:1px}.mc{font-size:12.5px}.change{font-size:10px}.since{font-size:9px;color:var(--faint)}.up{color:var(--mint)}.down{color:var(--red)}.dim{color:var(--faint)}
@@ -38,7 +41,8 @@
     footer .status{display:flex;align-items:center;gap:6px;min-width:0;flex:1}footer .status span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     footer button{color:var(--muted);padding:3px 5px;border-radius:5px;display:flex;align-items:center;gap:4px;white-space:nowrap}footer button:hover{color:var(--ink);background:rgba(255,255,255,.07)}
     footer .health{color:var(--red);background:rgba(255,107,105,.1);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}footer .health:hover{color:#fff;background:rgba(255,107,105,.25)}
-    .toast{position:fixed;left:50%;bottom:47px;transform:translate(-50%,8px);background:#263431;border:1px solid rgba(57,217,151,.4);color:var(--mint2);padding:7px 11px;border-radius:8px;font-size:11px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}.toast.show{opacity:1;transform:translate(-50%,0)}
+    .toast{position:fixed;left:50%;bottom:47px;transform:translate(-50%,8px);display:flex;align-items:center;gap:10px;max-width:calc(100% - 24px);white-space:nowrap;background:#263431;border:1px solid rgba(57,217,151,.4);color:var(--mint2);padding:7px 11px;border-radius:8px;font-size:11px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}.toast.show{opacity:1;transform:translate(-50%,0)}.toast.show.has-action{pointer-events:auto}
+    .toast span{overflow:hidden;text-overflow:ellipsis}.toast button{color:#fff;font-weight:650;padding:2px 6px;border-radius:5px;background:rgba(57,217,151,.25)}.toast button:hover{background:rgba(57,217,151,.4)}
     /* 边缘缩放手柄（透明窗口没有系统边框） */
     .grip{position:fixed;z-index:5;-webkit-app-region:no-drag}.grip.right{top:14px;bottom:14px;right:0;width:6px;cursor:ew-resize}.grip.top{left:14px;right:14px;top:0;height:5px;cursor:ns-resize}.grip.bottom{left:14px;right:14px;bottom:0;height:6px;cursor:ns-resize}.grip.corner{right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize}
     .compact .toolbar,.compact .cols,.compact .list,.compact footer,.compact .grip,.compact .brand-text,.compact .head-actions .full{display:none}
@@ -73,8 +77,20 @@
   <script>
     const { esc, compact, pct, agoShort, frontRankText, frontRankHelp, frontRankClass, chainOf, chainLabel, shortAddr } = window.fmt;
     const $ = (s) => document.querySelector(s);
-    const toast = (text) => { const n = $("#toast"); n.textContent = text; n.classList.add("show"); clearTimeout(toast.timer); toast.timer = setTimeout(() => n.classList.remove("show"), 2200); };
-    let tokens = [], query = "", sortMode = "new", connected = false, configured = null, groupLabel = "", freshAddress = null, fomoLoggedIn = false;
+    function toast(text, action = null, ms = 2200) {
+      const n = $("#toast");
+      n.replaceChildren(Object.assign(document.createElement("span"), { textContent: text }));
+      if (action) { const b = document.createElement("button"); b.textContent = action.label; b.onclick = () => { n.classList.remove("show"); action.run(); }; n.append(b); }
+      n.classList.toggle("has-action", !!action);
+      n.classList.add("show");
+      clearTimeout(toast.timer);
+      toast.timer = setTimeout(() => n.classList.remove("show"), ms);
+    }
+    // 排序：最新 → 市值 → 喊后涨跌 → KOL 数，循环切换，记在本机
+    const SORTS = { new: "最新", mc: "市值", change: "涨跌", kol: "KOL" };
+    let sortMode = "new";
+    try { const saved = localStorage.getItem("sortMode"); if (SORTS[saved]) sortMode = saved; } catch {}
+    let tokens = [], query = "", connected = false, configured = null, groupLabel = "", freshAddress = null, fomoLoggedIn = false;
 
     function spark(values, up, live) {
       const a = Array.isArray(values) && values.length > 1 ? values : [0.5, 0.5];
@@ -83,15 +99,20 @@
       return `<svg class="spark ${!live ? "flat" : up ? "" : "down"}" viewBox="0 0 56 26" preserveAspectRatio="none"><polyline points="${points}"/></svg>`;
     }
 
+    const SOURCE_SHORT = (group) => String(group || "").startsWith("feishu:") ? "飞书" : String(group || "").startsWith("qq:") ? "QQ" : "微信";
+
     function row(t) {
       const m = t.market || {}, c = chainOf(t);
       const ch = t.change, cls = ch == null ? "dim" : ch >= 0 ? "up" : "down";
       const logo = `${esc((m.symbol || "?").slice(0, 2))}${m.logo ? `<img src="${esc(m.logo)}" alt="" onerror="this.remove()"/>` : ""}`;
-      const fr = t.fomo ? `<span class="${frontRankClass(t.fomo.frontRank?.ratio)}" title="${esc("fomo 前排 " + frontRankText(t.fomo.frontRank) + "\n" + frontRankHelp(t.fomo.frontRank))}">◔ ${esc(frontRankText(t.fomo.frontRank))}</span>` : "";
+      const first = t.mentions?.[0];
+      const sources = [...new Set((t.mentions || []).map((x) => SOURCE_SHORT(x.group)))];
+      const who = first ? `<span class="src" title="${esc("来源：" + sources.join(" / "))}">${esc(sources.length > 1 ? `${SOURCE_SHORT(first.group)}+` : SOURCE_SHORT(first.group))}</span><span class="who" title="${esc("首个喊单：" + first.sender)}">${esc(first.sender)}</span>` : "";
+      const fr = t.fomo ? `<span class="fr ${frontRankClass(t.fomo.frontRank?.ratio)}" title="${esc("fomo 前排 " + frontRankText(t.fomo.frontRank) + "\n" + frontRankHelp(t.fomo.frontRank))}">◔ ${esc(frontRankText(t.fomo.frontRank))}</span>` : "";
       return `<article class="row ${t.address === freshAddress ? "fresh" : ""}" data-address="${esc(t.address)}" data-chain="${esc(c)}">
         <div class="token-logo">${logo}</div>
         <div class="main"><div class="line1">${m.symbol ? `<b>${esc(m.symbol)}</b>` : `<span class="addr num">${esc(shortAddr(t.address))}</span>`}<span class="chain">${esc(chainLabel(c))}</span></div>
-          <div class="line2 num"><span class="kol" title="喊单人数">👥 ${t.kol || 0}</span>${fr}</div></div>
+          <div class="line2 num"><span class="kol" title="喊单人数">👥 ${t.kol || 0}</span>${who}${fr}</div></div>
         ${spark(t.spark, t.trend > 0, t.live)}
         <div class="right num"><span class="mc">${compact(m.mc)}</span><span class="change ${cls}">${pct(ch, t.changeApprox)}</span><span class="since">${agoShort(t.firstSeen)}前喊</span></div>
       </article>`;
@@ -100,7 +121,11 @@
     function shown() {
       const q = query.trim().toLowerCase();
       const list = q ? tokens.filter((t) => [t.address, t.market?.symbol, t.market?.name].some((v) => String(v || "").toLowerCase().includes(q))) : tokens.slice();
-      if (sortMode === "mc") list.sort((a, b) => (b.market?.mc || 0) - (a.market?.mc || 0));
+      // 没数据的排最后；Array.sort 稳定，同值保持「最新」顺序
+      const by = (f) => list.sort((a, b) => (f(b) ?? -Infinity) - (f(a) ?? -Infinity));
+      if (sortMode === "mc") by((t) => t.market?.mc || null);
+      else if (sortMode === "change") by((t) => (typeof t.change === "number" && isFinite(t.change) ? t.change : null));
+      else if (sortMode === "kol") by((t) => t.kol || 0);
       return list;
     }
 
@@ -162,6 +187,11 @@
       else if (e.t === "unseen") { const n = Number(e.count) || 0; $("#unseen").hidden = n <= 0; $("#unseen").textContent = n > 99 ? "99+" : String(n); }
       else if (e.t === "compact") document.body.classList.toggle("compact", !!e.value);
       else if (e.t === "source_health") healthStatus(e.items);
+      else if (e.t === "token_muted") {
+        tokens = tokens.filter((x) => x.address !== e.address); render();
+        toast(`已隐藏 ${e.symbol || shortAddr(e.address)}`, { label: "撤销", run: () => window.fomomo.unmuteToken(e.address) }, 6000);
+      }
+      else if (e.t === "toast") toast(String(e.text || ""));
       else if (e.t === "token_hidden") { tokens = tokens.filter((x) => x.address !== e.address); render(); }
       else if (e.t === "settings" && e.settings?.panel) document.documentElement.style.setProperty("--a", String(Math.min(1, Math.max(0, Number(e.settings.panel.backgroundOpacity ?? 1)))));
       else if (e.t === "bridge_status" && e.bridge === "gmgn") gmgnStatus(e.state, e.message);
@@ -176,10 +206,24 @@
       const t = tokens.find((x) => x.address === el.dataset.address && chainOf(x) === el.dataset.chain) || tokens.find((x) => x.address === el.dataset.address);
       if (t) window.fomomo.openDetail(t);
     });
+    $("#list").addEventListener("contextmenu", (ev) => {
+      const el = ev.target.closest(".row");
+      if (!el) return;
+      ev.preventDefault();
+      const t = tokens.find((x) => x.address === el.dataset.address && chainOf(x) === el.dataset.chain) || tokens.find((x) => x.address === el.dataset.address);
+      if (t) window.fomomo.rowMenu(t);
+    });
     $("#query").oninput = (e) => { query = e.target.value; render(); };
     $("#query").onkeydown = (e) => { if (e.key === "Escape") { e.target.value = query = ""; render(); } };
     $("#qclear").onclick = () => { $("#query").value = query = ""; render(); };
-    $("#sort").onclick = () => { sortMode = sortMode === "new" ? "mc" : "new"; $("#sort").textContent = sortMode === "new" ? "最新" : "市值"; render(); };
+    function applySort() { $("#sort").textContent = SORTS[sortMode]; $("#sort").title = `排序：${SORTS[sortMode]}（点击切换：${Object.values(SORTS).join(" → ")}）`; }
+    $("#sort").onclick = () => {
+      const keys = Object.keys(SORTS);
+      sortMode = keys[(keys.indexOf(sortMode) + 1) % keys.length];
+      try { localStorage.setItem("sortMode", sortMode); } catch {}
+      applySort(); render();
+    };
+    applySort();
     $("#compact").onclick = () => { document.body.classList.toggle("compact"); window.fomomo.toggleCompact(document.body.classList.contains("compact")); };
     $("#hide").onclick = () => window.fomomo.hidePanel();
     $("#dash").onclick = () => window.fomomo.openDashboard(null);
