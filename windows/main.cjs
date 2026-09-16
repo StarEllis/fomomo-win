@@ -2,6 +2,7 @@ const { app, BrowserWindow, clipboard, ipcMain, screen, Tray, Menu, nativeImage,
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const { createAlerter } = require("./alerts.cjs");
 
 const APP_NAME = "fomomo";
 const APP_ICON = path.join(__dirname, "assets", "icon.ico");
@@ -30,7 +31,7 @@ let onboardingShown = false;
 let compact = false;
 let expandedBounds = null;
 let savePanelTimer = null;
-let pendingNewAddress = null;
+const alerter = createAlerter();
 let selectedAddress = null;
 let selectedChain = null;
 // 新币自动弹出的卡（不抢焦点、按设置停留几秒后自动收起）；用户在卡上按下鼠标即钉住转为手动卡
@@ -179,11 +180,26 @@ function fitOnScreen(b) {
 const PANEL_MIN = { width: 320, height: 420 };
 const PANEL_MAX_WIDTH = 600;
 
-/** 渲染层边缘手柄拖动：start 记下起始边界，move 按屏幕位移（DIP）改尺寸，end 保存到设置。上边拖动改高度并保持下边不动 */
+/**
+ * 渲染层边缘手柄拖动：start 记下起始边界，move 按屏幕位移（DIP）改尺寸，end 保存到设置。上边拖动改高度并保持下边不动。
+ * edge = "move" 是收起小图标的拖动（整块都是展开按钮，不能用系统拖动区，否则点击会被吞掉）：只挪位置，松手后夹回屏幕并保存
+ */
 function resizePanel({ phase, edge, dx, dy } = {}) {
-  if (!overlayWindow || compact) return;
+  const moving = edge === "move";
+  if (!overlayWindow || compact !== moving) return;
   if (phase === "start") { resizeStart = overlayWindow.getBounds(); return; }
   if (!resizeStart) return;
+  if (moving) {
+    if (phase === "end") {
+      resizeStart = null;
+      const b = fitOnScreen(overlayWindow.getBounds());
+      overlayWindow.setBounds(b);
+      void savePanel({ x: b.x, y: b.y });
+      return;
+    }
+    overlayWindow.setBounds({ ...resizeStart, x: Math.round(resizeStart.x + (Number(dx) || 0)), y: Math.round(resizeStart.y + (Number(dy) || 0)) });
+    return;
+  }
   if (phase === "end") {
     resizeStart = null;
     clearTimeout(savePanelTimer);
@@ -594,19 +610,8 @@ function handleSidecarEvent(event) {
         detailWindow?.webContents.send("fomomo:event", { t: "detail_selected", token: updated, auto: detailAuto });
       }
     }
-    if (pendingNewAddress) {
-      const fresh = tokenState.find((t) => t.address === pendingNewAddress);
-      if (fresh) {
-        pendingNewAddress = null;
-        const { mode } = popupSettings();
-        if (overlayWindow?.isVisible() && !compact) {
-          if (mode === "card") showDetail(fresh, true);
-          else if (mode === "notify") notifyNewToken(fresh, { countUnseen: false });
-        } else notifyNewToken(fresh, { balloon: mode !== "off" });
-      }
-    }
-  } else if (event.t === "new_token" && typeof event.address === "string") {
-    pendingNewAddress = event.address;
+    const alerts = alerter.update(tokenState, cachedEvents.get("settings")?.settings?.popup);
+    if (alerts.length) dispatchAlerts(alerts);
   } else if (event.t === "token_detail" && event.token?.address === selectedAddress) {
     // 不在追踪列表里的币（dashboard 点开的旧币）：数据不进 state，单独推给详情卡
     detailWindow?.webContents.send("fomomo:event", { t: "detail_selected", token: event.token, auto: detailAuto });
@@ -636,18 +641,42 @@ function handleSidecarEvent(event) {
 }
 
 /**
- * 悬浮窗看不到时的新币提醒：托盘气泡（Windows 10+ 显示为系统通知，不依赖开始菜单快捷方式）+ 未读计数。
- * 点气泡 = 展开悬浮窗并打开这个币的详情卡
+ * 一次 state 里达到提醒条件的币（alerts.cjs）：悬浮窗在看 → 按设置弹卡 / 发系统提醒；
+ * 看不到 → 计未读，除「不提醒」外发托盘气泡。一次多个只弹最后一个，气泡标题带总数
  */
-function notifyNewToken(token, { countUnseen = true, balloon = true } = {}) {
-  if (countUnseen) setUnseen(unseenCount + 1);
-  if (!balloon) return;
+function dispatchAlerts(alerts) {
+  for (const a of alerts) {
+    if (a.kind === "heat") overlayWindow?.webContents.send("fomomo:event", { t: "token_heat", address: a.token.address, recent: a.recent });
+  }
+  const { mode } = popupSettings();
+  const last = alerts[alerts.length - 1];
+  if (overlayWindow?.isVisible() && !compact) {
+    if (mode === "card") showDetail(last.token, true);
+    else if (mode === "notify") notifyAlert(last, alerts.length);
+    return;
+  }
+  setUnseen(unseenCount + alerts.length);
+  if (mode !== "off") notifyAlert(last, alerts.length);
+}
+
+/** 托盘气泡（Windows 10+ 显示为系统通知，不依赖开始菜单快捷方式）；点气泡 = 展开悬浮窗并打开这个币的详情卡 */
+function notifyAlert({ kind, token, recent }, total = 1) {
   const m = token.market || {};
   const chain = String(m.chain || token.chainHint || "").toUpperCase();
-  const first = token.mentions?.[0];
-  const title = `新喊单 · ${m.symbol || `${token.address.slice(0, 6)}…${token.address.slice(-4)}`}`;
-  const content = [chain, first?.sender ? `${first.sender} 喊` : null, first?.text ? String(first.text).slice(0, 60) : null].filter(Boolean).join(" · ") || token.address;
-  showBalloon(title, content, () => openNotifiedToken(token));
+  const name = m.symbol || `${token.address.slice(0, 6)}…${token.address.slice(-4)}`;
+  const more = total > 1 ? `（共 ${total} 个）` : "";
+  const mentions = token.mentions || [];
+  let title, content;
+  if (kind === "heat") {
+    const last = mentions[mentions.length - 1];
+    title = `🔥 再次被喊 · ${name}${more}`;
+    content = [chain, `30 分钟内 ${recent} 人喊，累计 ${token.kol || 0} 人`, last?.sender ? `${last.sender}：${String(last.text || "").slice(0, 50)}` : null].filter(Boolean).join(" · ");
+  } else {
+    const first = mentions[0];
+    title = `新喊单 · ${name}${more}`;
+    content = [chain, (token.kol || 0) > 1 ? `${token.kol} 人喊` : first?.sender ? `${first.sender} 喊` : null, first?.text ? String(first.text).slice(0, 60) : null].filter(Boolean).join(" · ");
+  }
+  showBalloon(title, content || token.address, () => openNotifiedToken(token));
 }
 
 function showBalloon(title, content, onClick) {

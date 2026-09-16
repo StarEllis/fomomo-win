@@ -26,6 +26,7 @@
     .list{flex:1;overflow:auto;padding:6px;scrollbar-width:thin;scrollbar-color:#40504c transparent}.list::-webkit-scrollbar{width:7px}.list::-webkit-scrollbar-thumb{background:#3a4946;border-radius:10px}
     .row{display:grid;grid-template-columns:32px minmax(0,1fr) 60px 72px;gap:9px;align-items:center;padding:8px;margin-bottom:3px;border:1px solid transparent;border-radius:12px;cursor:pointer;transition:background .16s,border-color .16s}
     .row:hover{background:rgba(255,255,255,.06)}.row.fresh{background:rgba(57,217,151,.06);border-color:rgba(57,217,151,.4);animation:in .5s ease-out}@keyframes in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+    .row.reheat{background:rgba(255,159,67,.08);border-color:rgba(255,159,67,.45)}.heat{flex:0 0 auto;color:#ffa552}
     .token-logo{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;background:#283431;color:var(--mint2);font-size:11px;font-weight:750;overflow:hidden;position:relative}.token-logo img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
     .main{min-width:0}.line1,.line2{display:flex;align-items:center;gap:6px;min-width:0}.line1 b{font-size:13.5px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.line1 .addr{font-size:12px;color:var(--muted)}
     .chain{font-size:9px;font-weight:750;line-height:16px;padding:0 5px;border-radius:5px;background:rgba(115,167,255,.14);color:#9abaff;flex:0 0 auto}
@@ -46,7 +47,7 @@
     /* 边缘缩放手柄（透明窗口没有系统边框） */
     .grip{position:fixed;z-index:5;-webkit-app-region:no-drag}.grip.right{top:14px;bottom:14px;right:0;width:6px;cursor:ew-resize}.grip.top{left:14px;right:14px;top:0;height:5px;cursor:ns-resize}.grip.bottom{left:14px;right:14px;bottom:0;height:6px;cursor:ns-resize}.grip.corner{right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize}
     .compact .toolbar,.compact .cols,.compact .list,.compact footer,.compact .grip,.compact .brand-text,.compact .head-actions .full{display:none}
-    .compact header{height:100%;border:0;justify-content:center;padding:0}.compact .head-actions{margin:0;position:absolute;inset:0}.compact .head-actions .compact-toggle{width:100%;height:100%;opacity:0}
+    .compact header{height:100%;border:0;justify-content:center;padding:0}.compact .head-actions{margin:0;position:absolute;inset:0}.compact .head-actions .compact-toggle{width:100%;height:100%;opacity:0;cursor:grab}.compact .head-actions .compact-toggle:active{cursor:grabbing}
     /* 收起态的未读角标：隐藏 / 收起期间到的新币数（主进程计数，展开即清零） */
     .brand-mark{position:relative}.unseen{position:absolute;top:-7px;right:-9px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-weight:750;line-height:17px;text-align:center;box-shadow:0 0 0 2px #182022}
     .compact .unseen{animation:pulse 1.6s ease-in-out infinite}@keyframes pulse{50%{transform:scale(1.18)}}
@@ -90,7 +91,7 @@
     const SORTS = { new: "最新", mc: "市值", change: "涨跌", kol: "KOL" };
     let sortMode = "new";
     try { const saved = localStorage.getItem("sortMode"); if (SORTS[saved]) sortMode = saved; } catch {}
-    let tokens = [], query = "", connected = false, configured = null, groupLabel = "", freshAddress = null, fomoLoggedIn = false;
+    let tokens = [], query = "", connected = false, configured = null, groupLabel = "", freshAddress = null, heatAddress = null, fomoLoggedIn = false;
 
     function spark(values, up, live) {
       const a = Array.isArray(values) && values.length > 1 ? values : [0.5, 0.5];
@@ -108,11 +109,15 @@
       const first = t.mentions?.[0];
       const sources = [...new Set((t.mentions || []).map((x) => SOURCE_SHORT(x.group)))];
       const who = first ? `<span class="src" title="${esc("来源：" + sources.join(" / "))}">${esc(sources.length > 1 ? `${SOURCE_SHORT(first.group)}+` : SOURCE_SHORT(first.group))}</span><span class="who" title="${esc("首个喊单：" + first.sender)}">${esc(first.sender)}</span>` : "";
+      // 首喊超过 1 小时的老币：30 分钟内又有人喊就标 🔥 人数（提醒条件见 alerts.cjs）
+      const nowSec = Date.now() / 1000;
+      const reheat = first && first.time < nowSec - 3600 ? new Set((t.mentions || []).filter((x) => x.time >= nowSec - 1800).map((x) => x.sender)).size : 0;
+      const heat = reheat ? `<span class="heat" title="${esc(`30 分钟内有 ${reheat} 人再次喊单`)}">🔥${reheat}</span>` : "";
       const fr = t.fomo ? `<span class="fr ${frontRankClass(t.fomo.frontRank?.ratio)}" title="${esc("fomo 前排 " + frontRankText(t.fomo.frontRank) + "\n" + frontRankHelp(t.fomo.frontRank))}">◔ ${esc(frontRankText(t.fomo.frontRank))}</span>` : "";
-      return `<article class="row ${t.address === freshAddress ? "fresh" : ""}" data-address="${esc(t.address)}" data-chain="${esc(c)}">
+      return `<article class="row ${t.address === freshAddress ? "fresh" : t.address === heatAddress ? "reheat" : ""}" data-address="${esc(t.address)}" data-chain="${esc(c)}">
         <div class="token-logo">${logo}</div>
         <div class="main"><div class="line1">${m.symbol ? `<b>${esc(m.symbol)}</b>` : `<span class="addr num">${esc(shortAddr(t.address))}</span>`}<span class="chain">${esc(chainLabel(c))}</span></div>
-          <div class="line2 num"><span class="kol" title="喊单人数">👥 ${t.kol || 0}</span>${who}${fr}</div></div>
+          <div class="line2 num"><span class="kol" title="喊单人数">👥 ${t.kol || 0}</span>${heat}${who}${fr}</div></div>
         ${spark(t.spark, t.trend > 0, t.live)}
         <div class="right num"><span class="mc">${compact(m.mc)}</span><span class="change ${cls}">${pct(ch, t.changeApprox)}</span><span class="since">${agoShort(t.firstSeen)}前喊</span></div>
       </article>`;
@@ -183,6 +188,7 @@
       if (e.t === "state" && Array.isArray(e.tokens)) { tokens = e.tokens; render(); }
       else if (e.t === "ready") { const gs = Array.isArray(e.groups) ? e.groups.map((g) => g.displayName).filter(Boolean) : []; groupLabel = !gs.length ? "未选择群" : gs.length === 1 ? gs[0] : `${gs[0]} 等 ${gs.length} 群`; lastVisible = ""; render(); }
       else if (e.t === "sources") { configured = e.configured; render(); }
+      else if (e.t === "token_heat") { heatAddress = e.address; render(); setTimeout(() => { if (heatAddress === e.address) { heatAddress = null; render(); } }, 4000); }
       else if (e.t === "new_token") { freshAddress = e.address; render(); setTimeout(() => { if (freshAddress === e.address) { freshAddress = null; render(); } }, 2200); }
       else if (e.t === "unseen") { const n = Number(e.count) || 0; $("#unseen").hidden = n <= 0; $("#unseen").textContent = n > 99 ? "99+" : String(n); }
       else if (e.t === "compact") document.body.classList.toggle("compact", !!e.value);
@@ -224,7 +230,33 @@
       applySort(); render();
     };
     applySort();
-    $("#compact").onclick = () => { document.body.classList.toggle("compact"); window.fomomo.toggleCompact(document.body.classList.contains("compact")); };
+    // 收起的小图标：按住移动超过几像素 = 拖动窗口，否则松手算点击（展开）
+    let dragged = false;
+    $("#compact").addEventListener("pointerdown", (e) => {
+      if (!document.body.classList.contains("compact") || e.button !== 0) return;
+      const b = e.currentTarget, sx = e.screenX, sy = e.screenY;
+      try { b.setPointerCapture(e.pointerId); } catch {}
+      dragged = false;
+      const move = (m) => {
+        const dx = m.screenX - sx, dy = m.screenY - sy;
+        if (!dragged && Math.hypot(dx, dy) < 4) return;
+        if (!dragged) { dragged = true; window.fomomo.resizePanel("start", "move", 0, 0); }
+        window.fomomo.resizePanel("move", "move", dx, dy);
+      };
+      const up = () => {
+        b.removeEventListener("pointermove", move);
+        b.removeEventListener("pointerup", up);
+        b.removeEventListener("lostpointercapture", up);
+        if (dragged) window.fomomo.resizePanel("end", "move", 0, 0);
+      };
+      b.addEventListener("pointermove", move);
+      b.addEventListener("pointerup", up);
+      b.addEventListener("lostpointercapture", up);
+    });
+    $("#compact").onclick = () => {
+      if (dragged) { dragged = false; return; }
+      document.body.classList.toggle("compact"); window.fomomo.toggleCompact(document.body.classList.contains("compact"));
+    };
     $("#hide").onclick = () => window.fomomo.hidePanel();
     $("#dash").onclick = () => window.fomomo.openDashboard(null);
     $("#battle").onclick = () => window.fomomo.openDashboard("battle");

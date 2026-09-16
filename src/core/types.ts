@@ -416,7 +416,7 @@ export interface Settings {
   qqGroups: string[];
   /** 悬浮窗尺寸与背景不透明度（0–1）；x / y / compact 是 Windows 壳记住的位置与收起态（macOS 不读） */
   panel: { width: number; height: number; backgroundOpacity: number; x?: number | null; y?: number | null; compact?: boolean };
-  /** 新币自动弹卡（Windows 壳）：card = 弹详情卡，notify = 只发系统提醒，off = 都不弹；seconds = 自动卡停留秒数 */
+  /** 新币提醒（Windows 壳）：card = 弹详情卡，notify = 只发系统提醒，off = 都不弹；seconds = 自动卡停留秒数；其余是提醒条件 */
   popup: PopupSettings;
   /** QQ OneBot 连接：enabled 后才去连本机桥接；url / token 留空时回退到环境变量与默认地址 */
   qq: QQSettings;
@@ -426,7 +426,19 @@ export interface Settings {
 }
 
 export type PopupMode = "card" | "notify" | "off";
-export interface PopupSettings { mode: PopupMode; seconds: number }
+export interface PopupSettings {
+  mode: PopupMode;
+  seconds: number;
+  /** 喊单人数达到几人才提醒（1 = 一出现就提醒） */
+  minKol: number;
+  /** 市值范围（美元），0 = 不限；行情没到前不判 */
+  mcMin: number;
+  mcMax: number;
+  /** 只提醒这些链（engine 的链 id，如 sol / bsc），空 = 全部 */
+  chains: string[];
+  /** 老币（首喊超过 1 小时）30 分钟内又有几人喊就提醒，0 = 关 */
+  heatKol: number;
+}
 export interface QQSettings { enabled: boolean; url: string; token: string }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -434,7 +446,7 @@ export const DEFAULT_SETTINGS: Settings = {
   feishuGroups: [],
   qqGroups: [],
   panel: { width: 326, height: 592, backgroundOpacity: 1 },
-  popup: { mode: "card", seconds: 6 },
+  popup: { mode: "card", seconds: 6, minKol: 1, mcMin: 0, mcMax: 0, chains: [], heatKol: 2 },
   // 老用户按 README 设过 FOMOMO_ONEBOT_ENABLED=1：界面里还没存过 QQ 设置时沿用它，存过以后以界面为准
   qq: { enabled: process.env.FOMOMO_ONEBOT_ENABLED === "1", url: "", token: "" },
   mutedTokens: [],

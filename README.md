@@ -45,7 +45,7 @@ corepack pnpm install
 corepack pnpm windows:build
 ```
 
-产物在 `dist/windows/`。开发调试可运行 `corepack pnpm windows:dev`；首次启动会打开群组设置，点击「创建应用并登录」，在浏览器完成飞书授权，再勾选要监听的群并保存。数据放在 `%LOCALAPPDATA%\Fomomo`（卸载不删）。悬浮窗与弹卡和 macOS 版一致：新币自动弹卡（不抢焦点，默认 6 秒后收起，点一下钉住；「设置 → 新币提醒」可改成只发系统提醒或关闭）、1s–1d K 线（滚轮缩放 / 拖动平移 / 双击复位，点喊单标记切换群聊语境）、官方推特与译文、GMGN 喊单（GMGN / X 两页签）、fomo 关注者与 Thesis。悬浮窗拖上 / 下 / 右边缘改尺寸；底栏可直达 24h 战况、打开内置 gmgn 窗口过 Cloudflare 验证、登录 fomo。
+产物在 `dist/windows/`。开发调试可运行 `corepack pnpm windows:dev`；首次启动会打开群组设置，点击「创建应用并登录」，在浏览器完成飞书授权，再勾选要监听的群并保存。数据放在 `%LOCALAPPDATA%\Fomomo`（卸载不删）。悬浮窗与弹卡和 macOS 版一致：新币自动弹卡（不抢焦点，默认 6 秒后收起，点一下钉住；「设置 → 新币提醒」可改成只发系统提醒或关闭，并设置提醒条件：至少几人喊、市值范围、只看哪些链；首喊超过 1 小时的老币 30 分钟内又有多人喊也会提醒，行上显示 🔥 人数）、1s–1d K 线（滚轮缩放 / 拖动平移 / 双击复位，点喊单标记切换群聊语境）、官方推特与译文、GMGN 喊单（GMGN / X 两页签）、fomo 关注者与 Thesis。悬浮窗拖上 / 下 / 右边缘改尺寸；底栏可直达 24h 战况、打开内置 gmgn 窗口过 Cloudflare 验证、登录 fomo。
 
 开发时跑测试请用 Node 22（`.node-version`；SQLite 原生模块按 Node 22 ABI 编译）。Windows 界面测试：`corepack pnpm exec electron test/windows-ui-smoke.cjs`。图标由 `windows/assets/tray.svg` 生成：`corepack pnpm exec electron scripts/make-windows-icons.cjs`。
 

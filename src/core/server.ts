@@ -198,6 +198,11 @@ export function sanitizePopup(patch: Partial<PopupSettings> | undefined, cur: Po
   return {
     mode: p.mode === "card" || p.mode === "notify" || p.mode === "off" ? p.mode : cur.mode,
     seconds: p.seconds !== undefined && Number.isFinite(Number(p.seconds)) ? Math.round(clamp(Number(p.seconds), 2, 60)) : cur.seconds,
+    minKol: p.minKol !== undefined && Number.isFinite(Number(p.minKol)) ? Math.round(clamp(Number(p.minKol), 1, 20)) : cur.minKol,
+    mcMin: p.mcMin !== undefined && Number.isFinite(Number(p.mcMin)) ? Math.round(clamp(Number(p.mcMin), 0, 1e12)) : cur.mcMin,
+    mcMax: p.mcMax !== undefined && Number.isFinite(Number(p.mcMax)) ? Math.round(clamp(Number(p.mcMax), 0, 1e12)) : cur.mcMax,
+    chains: Array.isArray(p.chains) ? [...new Set(p.chains.filter((c): c is string => typeof c === "string").map((c) => c.trim().toLowerCase()).filter((c) => /^[a-z0-9]{1,16}$/.test(c)))].slice(0, 16) : cur.chains,
+    heatKol: p.heatKol !== undefined && Number.isFinite(Number(p.heatKol)) ? Math.round(clamp(Number(p.heatKol), 0, 20)) : cur.heatKol,
   };
 }
 

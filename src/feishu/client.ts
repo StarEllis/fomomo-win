@@ -9,7 +9,7 @@ import path from "node:path";
  * 每次调用一个进程，argv 直传不走 shell；stop() 杀掉在飞的并等它们退出，不留孤儿。
  */
 
-export type LarkErrorKind = "missing-cli" | "auth" | "rate-limit" | "forbidden" | "not-found" | "aborted" | "api" | "cli";
+export type LarkErrorKind = "missing-cli" | "auth" | "rate-limit" | "forbidden" | "not-found" | "aborted" | "api" | "network" | "cli";
 
 export class LarkError extends Error {
   constructor(
@@ -21,7 +21,7 @@ export class LarkError extends Error {
   }
   /** 值得退避重试（网络/限流/临时）；权限、未登录、未安装反复打也没意义，退避更长 */
   get transient(): boolean {
-    return this.kind === "rate-limit" || this.kind === "api" || this.kind === "cli";
+    return this.kind === "rate-limit" || this.kind === "api" || this.kind === "network" || this.kind === "cli";
   }
 }
 
@@ -168,7 +168,15 @@ export function resolveLarkCli(env: NodeJS.ProcessEnv): Resolved | null {
  */
 export function larkEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(env)) if (!/^(OPENCLAW_|HERMES_|LARK_CHANNEL)/i.test(k)) out[k] = v;
+  const noProxy: string[] = [];
+  for (const [k, v] of Object.entries(env)) {
+    if (/^(OPENCLAW_|HERMES_|LARK_CHANNEL)/i.test(k)) continue;
+    if (/^no_proxy$/i.test(k)) { if (v) noProxy.push(v); continue; }
+    out[k] = v;
+  }
+  // 飞书 / Lark 直连，不经用户设的 HTTP(S)_PROXY：本机代理（如 Clash）并发时偶发接不住新连接，而这些域名在代理里本来也是直连。
+  // Windows 环境变量名不分大小写，NO_PROXY / no_proxy 合成一个
+  out.NO_PROXY = [...noProxy, "feishu.cn", "larksuite.com"].join(",");
   return out;
 }
 
@@ -195,8 +203,27 @@ interface Envelope {
   error?: { type?: string; subtype?: string; code?: number; message?: string; hint?: string };
 }
 
-function classify(err: NonNullable<Envelope["error"]>): LarkError {
+/** lark-cli 的 JSON 信封：成功在 stdout；失败时写在 stderr（前面可能夹着别的输出） */
+export function larkEnvelope(stdout: string, stderr: string): Envelope | null {
+  for (const s of [stdout, stderr]) {
+    const t = s.trim();
+    const i = t.indexOf("{");
+    if (i < 0) continue;
+    try {
+      const j = JSON.parse(t.slice(i)) as Envelope;
+      if (j && typeof j === "object" && typeof j.ok === "boolean") return j;
+    } catch { /* 非 JSON 输出 */ }
+  }
+  return null;
+}
+
+export function classifyLarkError(err: NonNullable<Envelope["error"]>): LarkError {
   const code = typeof err.code === "number" ? err.code : undefined;
+  if (err.type === "network") {
+    // Go 的报错是 `API call failed: Get "<很长的 URL>": <原因>`，去掉 URL 才看得到原因
+    const cause = (err.message ?? "").replace(/^API call failed:\s*/, "").replace(/^[A-Za-z]+ "[^"]*":\s*/, "").slice(0, 200);
+    return new LarkError(`飞书网络请求失败${/proxyconnect/.test(cause) ? "（连本机代理失败）" : ""}：${cause || "未知原因"}`, "network");
+  }
   const msg = (err.message ?? "飞书接口调用失败").slice(0, 300);
   const hint = err.hint ? ` (${err.hint.slice(0, 200)})` : "";
   if (err.type === "auth" || /user_access_token|not logged in|未登录|login|authoriz|token (?:expired|invalid)/i.test(msg))
@@ -224,8 +251,18 @@ export class LarkCliClient implements FeishuTransport {
     return this.resolved;
   }
 
-  /** 跑一次 `lark-cli api GET <path>`，返回信封里的 data */
+  /** `lark-cli api GET <path>`，返回信封里的 data。网络传输失败（多半是本机代理偶发接不住新连接）隔 0.5s 重试一次 */
   async get(apiPath: string, params: Record<string, string>, signal?: AbortSignal): Promise<unknown> {
+    try {
+      return await this.getOnce(apiPath, params, signal);
+    } catch (e) {
+      if (!(e instanceof LarkError && e.kind === "network")) throw e;
+      await new Promise((r) => setTimeout(r, 500));
+      return this.getOnce(apiPath, params, signal);
+    }
+  }
+
+  private async getOnce(apiPath: string, params: Record<string, string>, signal?: AbortSignal): Promise<unknown> {
     if (this.stopped) throw new LarkError("飞书客户端已关闭", "aborted");
     if (signal?.aborted) throw new LarkError("请求已取消", "aborted");
     const bin = this.locate();
@@ -245,13 +282,8 @@ export class LarkCliClient implements FeishuTransport {
         if (signal?.aborted || this.stopped || e?.name === "AbortError") return reject(new LarkError("请求已取消", "aborted"));
         if (e && e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return reject(new LarkError("lark-cli 输出超过 16MB 缓冲上限", "cli"));
         if (e && (e.killed || e.signal)) return reject(new LarkError(`lark-cli 超时（${TIMEOUT_MS}ms）被终止`, "cli"));
-        let env: Envelope | null = null;
-        try {
-          env = stdout.trim() ? (JSON.parse(stdout) as Envelope) : null;
-        } catch {
-          env = null;
-        }
-        if (env && env.ok === false && env.error) return reject(classify(env.error));
+        const env = larkEnvelope(stdout, stderr);
+        if (env && env.ok === false && env.error) return reject(classifyLarkError(env.error));
         if (env && env.ok === true) return resolve(env.data);
         const tail = larkErrorText(stdout, stderr).slice(0, 200);
         return reject(new LarkError(`lark-cli 退出码 ${e?.code ?? "?"}，输出无法解析${tail ? `：${tail}` : ""}`, "cli"));

@@ -244,6 +244,8 @@
   .kv .k-sub{color:var(--faint);font-size:11px;margin-top:4px}
   .kv input[type=number]{width:120px}
   .kv input[type=checkbox]{width:16px;height:16px;padding:0;accent-color:var(--accent);margin:0}
+  .kv input.mc{width:90px}
+  .chainpick{display:flex;flex-wrap:wrap;gap:6px 14px}.chainpick label{display:inline-flex;align-items:center;gap:5px;color:var(--text);font-size:12.5px;cursor:pointer}
   .card.form{max-width:none}
   td.err{max-width:260px;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-weight:400}
   /* 24h 战况：SVG 曲线 / 直方图 / 排名条 */
@@ -502,8 +504,15 @@
     <div class="form" id="popup-form" hidden style="margin-top:24px">
       <h2>新币提醒</h2>
       <div class="kv">
-        <label for="popup-mode">新币出现时</label><div><select id="popup-mode"><option value="card">弹出详情卡</option><option value="notify">只发系统提醒</option><option value="off">不提醒（只在列表里高亮）</option></select><div class="k-sub">悬浮窗隐藏或收起时，除「不提醒」外都会发系统提醒，并在收起的图标上计数</div></div>
+        <label for="popup-mode">提醒方式</label><div><select id="popup-mode"><option value="card">弹出详情卡</option><option value="notify">只发系统提醒</option><option value="off">不提醒（只在列表里高亮）</option></select><div class="k-sub">悬浮窗隐藏或收起时，除「不提醒」外都会发系统提醒，并在收起的图标上计数</div></div>
         <label for="popup-seconds">详情卡停留 (秒)</label><div><input id="popup-seconds" type="number" min="2" max="60" step="1" /><div class="k-sub">到时间自动收起；在卡上点一下就会钉住不再收起</div></div>
+      </div>
+      <h3 style="margin:18px 0 10px;font-size:13px">提醒条件 <span class="dim" style="font-weight:400">不满足的币照常出现在列表里，只是不弹</span></h3>
+      <div class="kv">
+        <label for="popup-minkol">至少几人喊</label><div><input id="popup-minkol" type="number" min="1" max="20" step="1" /><div class="k-sub">1 = 一出现就提醒；设 2 就等第二个人也喊了才提醒（不同群、不同人都算）</div></div>
+        <label for="popup-mcmin">市值范围</label><div><input id="popup-mcmin" class="mc" type="text" placeholder="不限" spellcheck="false" /> ～ <input id="popup-mcmax" class="mc" type="text" placeholder="不限" spellcheck="false" /><div class="k-sub">美元，可写 50k、2m；行情到了才判断，10 分钟内进入范围也会提醒</div></div>
+        <label>只看这些链</label><div><div class="chainpick" id="popup-chains"></div><div class="k-sub">都不勾 = 全部链</div></div>
+        <label for="popup-heat">老币再被喊</label><div><input id="popup-heat" type="number" min="0" max="20" step="1" /><div class="k-sub">首喊超过 1 小时的币，30 分钟内又有这么多人喊就提醒一次（行上显示 🔥 人数）；0 = 关</div></div>
       </div>
       <div class="row" style="margin-top:12px"><span class="status" id="popup-stat"></span></div>
     </div>
@@ -1115,7 +1124,7 @@ async function loadSettings() {
   await loadSettingsData();
   $("#pw").value = settings.panel.width; $("#ph").value = settings.panel.height;
   $("#po").value = Math.round((settings.panel.backgroundOpacity ?? 1) * 100); $("#poValue").textContent = $("#po").value + "%";
-  $("#popup-mode").value = settings.popup?.mode || "card"; $("#popup-seconds").value = settings.popup?.seconds ?? 6; $("#popup-seconds").disabled = $("#popup-mode").value !== "card";
+  fillPopup();
   qqDraft = null; qqMsg = null; renderQQSettings();
 }
 $("#po").oninput = () => { $("#poValue").textContent = $("#po").value + "%"; pushPanel({ backgroundOpacity: Number($("#po").value) / 100 }); };
@@ -1163,8 +1172,31 @@ function renderQQSettings() { const box = $("#qq-settings"); box.replaceChildren
 // 新币提醒方式（Windows 壳读 settings.popup）
 async function savePopup(patch) {
   settingsVersion++;
-  try { settings = await putSettings({ popup: patch }); $("#popup-seconds").value = settings.popup.seconds; $("#popup-stat").textContent = "已生效 " + new Date().toLocaleTimeString(); }
+  try { settings = await putSettings({ popup: patch }); fillPopup(); $("#popup-stat").textContent = "已生效 " + new Date().toLocaleTimeString(); }
   catch (e) { $("#popup-stat").textContent = "失败: " + e.message; }
+}
+// 市值输入：50k / 2.5m / 1b / 纯数字；空 = 不限（0）
+const parseMc = (v) => { const m = String(v).trim().toLowerCase().replace(/[$,\s]/g, "").match(/^(\d+(?:\.\d+)?)([kmb]?)$/); return m ? Number(m[1]) * ({ "": 1, k: 1e3, m: 1e6, b: 1e9 })[m[2]] : null; };
+const fmtMc = (v) => !v ? "" : v >= 1e9 && v % 1e7 === 0 ? v / 1e9 + "b" : v >= 1e6 && v % 1e4 === 0 ? v / 1e6 + "m" : v >= 1e3 && v % 10 === 0 ? v / 1e3 + "k" : String(v);
+const POPUP_CHAINS = [["sol", "SOL"], ["bsc", "BSC"], ["base", "Base"], ["eth", "ETH"], ["robinhood", "Robinhood"], ["monad", "Monad"]];
+$("#popup-chains").replaceChildren(...POPUP_CHAINS.map(([id, name]) => { const l = el("label"); const c = el("input"); c.type = "checkbox"; c.value = id; l.append(c, name); return l; }));
+$("#popup-chains").onchange = () => savePopup({ chains: [...document.querySelectorAll("#popup-chains input:checked")].map((c) => c.value) });
+$("#popup-minkol").onchange = () => savePopup({ minKol: Number($("#popup-minkol").value) });
+$("#popup-heat").onchange = () => savePopup({ heatKol: Number($("#popup-heat").value) });
+for (const k of ["mcMin", "mcMax"]) {
+  const input = $(k === "mcMin" ? "#popup-mcmin" : "#popup-mcmax");
+  input.onchange = () => {
+    const v = input.value.trim() ? parseMc(input.value) : 0;
+    if (v == null) { $("#popup-stat").textContent = "市值写成 50k、2m 这样的格式"; return; }
+    savePopup({ [k]: v });
+  };
+}
+function fillPopup() {
+  const p = settings.popup || {};
+  $("#popup-mode").value = p.mode || "card"; $("#popup-seconds").value = p.seconds ?? 6; $("#popup-seconds").disabled = $("#popup-mode").value !== "card";
+  $("#popup-minkol").value = p.minKol ?? 1; $("#popup-heat").value = p.heatKol ?? 2;
+  $("#popup-mcmin").value = fmtMc(p.mcMin); $("#popup-mcmax").value = fmtMc(p.mcMax);
+  for (const c of document.querySelectorAll("#popup-chains input")) c.checked = (p.chains || []).includes(c.value);
 }
 $("#popup-mode").onchange = () => { $("#popup-seconds").disabled = $("#popup-mode").value !== "card"; savePopup({ mode: $("#popup-mode").value }); };
 $("#popup-seconds").onchange = () => savePopup({ seconds: Number($("#popup-seconds").value) });
