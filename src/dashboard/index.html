@@ -245,6 +245,7 @@
   .kv input[type=number]{width:120px}
   .kv input[type=checkbox]{width:16px;height:16px;padding:0;accent-color:var(--accent);margin:0}
   .kv input.mc{width:90px}
+  .kv .k-sub.warn{color:var(--down)}
   .chainpick{display:flex;flex-wrap:wrap;gap:6px 14px}.chainpick label{display:inline-flex;align-items:center;gap:5px;color:var(--text);font-size:12.5px;cursor:pointer}
   .card.form{max-width:none}
   td.err{max-width:260px;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-weight:400}
@@ -511,6 +512,7 @@
       <div class="kv">
         <label for="popup-minkol">至少几人喊</label><div><input id="popup-minkol" type="number" min="1" max="20" step="1" /><div class="k-sub">1 = 一出现就提醒；设 2 就等第二个人也喊了才提醒（不同群、不同人都算）</div></div>
         <label for="popup-mcmin">市值范围</label><div><input id="popup-mcmin" class="mc" type="text" placeholder="不限" spellcheck="false" /> ～ <input id="popup-mcmax" class="mc" type="text" placeholder="不限" spellcheck="false" /><div class="k-sub">美元，可写 50k、2m；行情到了才判断，10 分钟内进入范围也会提醒</div></div>
+        <label for="popup-winrate">喊单人胜率 ≥</label><div><input id="popup-winrate" type="number" min="0" max="100" step="5" /> %<div class="k-sub">参与喊单的人里至少一位历史胜率达到这个数（至少 3 单，口径同「喊单人」页）；0 = 不看胜率</div></div>
         <label>只看这些链</label><div><div class="chainpick" id="popup-chains"></div><div class="k-sub">都不勾 = 全部链</div></div>
         <label for="popup-heat">老币再被喊</label><div><input id="popup-heat" type="number" min="0" max="20" step="1" /><div class="k-sub">首喊超过 1 小时的币，30 分钟内又有这么多人喊就提醒一次（行上显示 🔥 人数）；0 = 关</div></div>
       </div>
@@ -525,6 +527,8 @@
       <h2>系统</h2>
       <div class="kv">
         <label for="autostart">开机自动启动</label><div><input id="autostart" type="checkbox" /><div class="k-sub" id="autostart-sub">登录 Windows 后自动在后台开始监听</div></div>
+        <label for="shortcut">显示 / 隐藏悬浮窗</label><div><select id="shortcut" disabled></select><div class="k-sub" id="shortcut-sub">全局快捷键，在任何程序里按下都有效</div></div>
+        <label>版本</label><div><span id="app-version">—</span><div class="k-sub" id="app-build"></div></div>
       </div>
     </div>
   </section>
@@ -1121,6 +1125,7 @@ function pushPanel(patch) {
 }
 async function loadSettings() {
   loadAutoStart();
+  loadAppInfo();
   await loadSettingsData();
   $("#pw").value = settings.panel.width; $("#ph").value = settings.panel.height;
   $("#po").value = Math.round((settings.panel.backgroundOpacity ?? 1) * 100); $("#poValue").textContent = $("#po").value + "%";
@@ -1181,6 +1186,7 @@ const fmtMc = (v) => !v ? "" : v >= 1e9 && v % 1e7 === 0 ? v / 1e9 + "b" : v >= 
 const POPUP_CHAINS = [["sol", "SOL"], ["bsc", "BSC"], ["base", "Base"], ["eth", "ETH"], ["robinhood", "Robinhood"], ["monad", "Monad"]];
 $("#popup-chains").replaceChildren(...POPUP_CHAINS.map(([id, name]) => { const l = el("label"); const c = el("input"); c.type = "checkbox"; c.value = id; l.append(c, name); return l; }));
 $("#popup-chains").onchange = () => savePopup({ chains: [...document.querySelectorAll("#popup-chains input:checked")].map((c) => c.value) });
+$("#popup-winrate").onchange = () => savePopup({ minWinRate: Number($("#popup-winrate").value) });
 $("#popup-minkol").onchange = () => savePopup({ minKol: Number($("#popup-minkol").value) });
 $("#popup-heat").onchange = () => savePopup({ heatKol: Number($("#popup-heat").value) });
 for (const k of ["mcMin", "mcMax"]) {
@@ -1194,7 +1200,7 @@ for (const k of ["mcMin", "mcMax"]) {
 function fillPopup() {
   const p = settings.popup || {};
   $("#popup-mode").value = p.mode || "card"; $("#popup-seconds").value = p.seconds ?? 6; $("#popup-seconds").disabled = $("#popup-mode").value !== "card";
-  $("#popup-minkol").value = p.minKol ?? 1; $("#popup-heat").value = p.heatKol ?? 2;
+  $("#popup-minkol").value = p.minKol ?? 1; $("#popup-winrate").value = p.minWinRate ?? 0; $("#popup-heat").value = p.heatKol ?? 2;
   $("#popup-mcmin").value = fmtMc(p.mcMin); $("#popup-mcmax").value = fmtMc(p.mcMax);
   for (const c of document.querySelectorAll("#popup-chains input")) c.checked = (p.chains || []).includes(c.value);
 }
@@ -1215,6 +1221,24 @@ async function loadAutoStart(value) {
   } catch (e) { sub.textContent = "读取失败: " + e.message; }
 }
 $("#autostart").onchange = () => loadAutoStart($("#autostart").checked);
+async function loadAppInfo() {
+  if (!window.fomomoNative?.appInfo) return;
+  try {
+    const info = await window.fomomoNative.appInfo();
+    $("#app-version").textContent = `fomomo ${info.version}`;
+    $("#app-build").textContent = [info.commit && `提交 ${info.commit}`, info.builtAt && `${info.builtAt} 打包`].filter(Boolean).join(" · ") || "开发模式";
+    const sel = $("#shortcut"), cur = info.shortcut.accelerator;
+    const opts = [...new Set([...info.shortcut.choices, cur].filter(Boolean))];
+    sel.innerHTML = opts.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join("") + `<option value="">不使用</option>`;
+    sel.value = cur;
+    sel.disabled = false;
+    const sub = $("#shortcut-sub");
+    sub.classList.toggle("warn", !!cur && !info.shortcut.ok);
+    sub.textContent = !cur ? "已关闭" : info.shortcut.ok ? "全局快捷键，在任何程序里按下都有效" : `${cur} 已被其他程序占用（常见是微信 / QQ 的热键），换一个`;
+  } catch (e) { $("#app-build").textContent = "读取失败: " + e.message; }
+}
+// 壳收到新设置后才重新注册，稍等再读回结果
+$("#shortcut").onchange = () => { $("#shortcut").disabled = true; pushPanel({ shortcut: $("#shortcut").value }); setTimeout(loadAppInfo, 800); };
 $("#ph").onchange = () => pushPanel({ height: Number($("#ph").value) });
 
 // 启动只拉设置 + 来源就绪态（就绪的当前来源随之加载群）；飞书等切到它的 tab 再懒加载，不拖慢总览

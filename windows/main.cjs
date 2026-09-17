@@ -1,8 +1,8 @@
-const { app, BrowserWindow, clipboard, ipcMain, screen, Tray, Menu, nativeImage, session, shell } = require("electron");
+const { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, Tray, Menu, nativeImage, session, shell } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
-const { createAlerter } = require("./alerts.cjs");
+const { createAlerter, alertReason } = require("./alerts.cjs");
 
 const APP_NAME = "fomomo";
 const APP_ICON = path.join(__dirname, "assets", "icon.ico");
@@ -36,6 +36,13 @@ let selectedAddress = null;
 let selectedChain = null;
 // 新币自动弹出的卡（不抢焦点、按设置停留几秒后自动收起）；用户在卡上按下鼠标即钉住转为手动卡
 let detailAuto = false;
+/** 当前详情卡「为什么弹」（alerts.cjs alertReason）；用户手动点开的卡没有 */
+let detailReason = null;
+/** 全局快捷键：显示 / 隐藏悬浮窗（settings.panel.shortcut，没存过用默认；常见组合常被微信 / QQ 等占用，所以可在设置里换） */
+const DEFAULT_SHORTCUT = "Ctrl+Alt+F";
+const SHORTCUT_CHOICES = ["Ctrl+Alt+F", "Ctrl+Alt+G", "Ctrl+Alt+Q", "Alt+Shift+F", "Alt+`", "Ctrl+`", "F9", "Ctrl+Shift+F12"];
+let shortcut = null;
+let shortcutOk = false;
 let detailDismissTimer = null;
 // 悬浮窗「fomo 前排」兴趣集：渲染层上报可见行，面板隐藏 / 收起时对 sidecar 发 []，恢复或 sidecar 重启后重放
 let frontRankVisible = [];
@@ -283,17 +290,18 @@ function showOverlay(focus = false) {
  * 打开详情卡。auto = 新币自动弹出：不抢焦点、6s 后自动收起；用户正在看的手动卡不会被自动卡顶掉。
  * 手动打开（点行）同样用 showInactive，焦点留在悬浮窗 / 用户原来的窗口，点卡片时再由系统给焦点。
  */
-function showDetail(input, auto = false) {
+function showDetail(input, auto = false, reason = null) {
   const token = resolveToken(input);
   if (!token || !detailWindow) return;
   if (auto && detailWindow.isVisible() && !detailAuto) return;
   clearTimeout(detailDismissTimer);
   detailAuto = auto;
+  detailReason = reason;
   selectedAddress = token.address;
   selectedChain = token.market?.chain || token.chainHint || null;
   positionDetail();
   detailWindow.showInactive();
-  detailWindow.webContents.send("fomomo:event", { t: "detail_selected", token, auto });
+  detailWindow.webContents.send("fomomo:event", { t: "detail_selected", token, auto, reason });
   sendSidecar({ t: "focus", address: selectedAddress, chain: selectedChain });
   if (auto) detailDismissTimer = setTimeout(hideDetail, popupSettings().seconds * 1000);
 }
@@ -309,6 +317,7 @@ function pinDetail() {
 function hideDetail() {
   clearTimeout(detailDismissTimer);
   detailAuto = false;
+  detailReason = null;
   if (detailWindow?.isVisible()) detailWindow.hide();
   if (selectedAddress) sendSidecar({ t: "focus", address: null, chain: null });
   selectedAddress = null;
@@ -607,14 +616,14 @@ function handleSidecarEvent(event) {
         // 卡打开时链未知（新币 ~0.5s 后行情才到）：链到了就跟上并重发 focus
         const chain = updated.market?.chain || updated.chainHint || null;
         if (chain !== selectedChain) { selectedChain = chain; sendSidecar({ t: "focus", address: selectedAddress, chain }); }
-        detailWindow?.webContents.send("fomomo:event", { t: "detail_selected", token: updated, auto: detailAuto });
+        detailWindow?.webContents.send("fomomo:event", { t: "detail_selected", token: updated, auto: detailAuto, reason: detailReason });
       }
     }
-    const alerts = alerter.update(tokenState, cachedEvents.get("settings")?.settings?.popup);
+    const alerts = alerter.update(tokenState, cachedEvents.get("settings")?.settings?.popup, Date.now() / 1000, cachedEvents.get("caller_stats")?.stats);
     if (alerts.length) dispatchAlerts(alerts);
   } else if (event.t === "token_detail" && event.token?.address === selectedAddress) {
     // 不在追踪列表里的币（dashboard 点开的旧币）：数据不进 state，单独推给详情卡
-    detailWindow?.webContents.send("fomomo:event", { t: "detail_selected", token: event.token, auto: detailAuto });
+    detailWindow?.webContents.send("fomomo:event", { t: "detail_selected", token: event.token, auto: detailAuto, reason: detailReason });
   } else if (event.t === "token_hidden" && event.address === selectedAddress) {
     hideDetail();
   } else if (event.t === "dashboard" && typeof event.url === "string") {
@@ -634,7 +643,8 @@ function handleSidecarEvent(event) {
   } else if (event.t === "settings") {
     cachedEvents.set("settings", event);
     applyPanelSettings(event);
-  } else if (["fomo_state", "trade_state", "trade_holdings", "source_health"].includes(event.t)) {
+    applyShortcut(event.settings?.panel?.shortcut);
+  } else if (["fomo_state", "trade_state", "trade_holdings", "source_health", "caller_stats"].includes(event.t)) {
     cachedEvents.set(event.t, event);
   }
   broadcastEvent(event);
@@ -651,7 +661,7 @@ function dispatchAlerts(alerts) {
   const { mode } = popupSettings();
   const last = alerts[alerts.length - 1];
   if (overlayWindow?.isVisible() && !compact) {
-    if (mode === "card") showDetail(last.token, true);
+    if (mode === "card") showDetail(last.token, true, alertReason(last));
     else if (mode === "notify") notifyAlert(last, alerts.length);
     return;
   }
@@ -660,7 +670,9 @@ function dispatchAlerts(alerts) {
 }
 
 /** 托盘气泡（Windows 10+ 显示为系统通知，不依赖开始菜单快捷方式）；点气泡 = 展开悬浮窗并打开这个币的详情卡 */
-function notifyAlert({ kind, token, recent }, total = 1) {
+function notifyAlert(alert, total = 1) {
+  const { kind, token, recent } = alert;
+  const reason = alertReason(alert);
   const m = token.market || {};
   const chain = String(m.chain || token.chainHint || "").toUpperCase();
   const name = m.symbol || `${token.address.slice(0, 6)}…${token.address.slice(-4)}`;
@@ -670,13 +682,13 @@ function notifyAlert({ kind, token, recent }, total = 1) {
   if (kind === "heat") {
     const last = mentions[mentions.length - 1];
     title = `🔥 再次被喊 · ${name}${more}`;
-    content = [chain, `30 分钟内 ${recent} 人喊，累计 ${token.kol || 0} 人`, last?.sender ? `${last.sender}：${String(last.text || "").slice(0, 50)}` : null].filter(Boolean).join(" · ");
+    content = [chain, `30 分钟内 ${recent} 人喊，累计 ${token.kol || 0} 人`, alert.best ? `${alert.best.sender} 胜率 ${alert.best.winRate}%` : null, last?.sender ? `${last.sender}：${String(last.text || "").slice(0, 50)}` : null].filter(Boolean).join(" · ");
   } else {
     const first = mentions[0];
     title = `新喊单 · ${name}${more}`;
-    content = [chain, (token.kol || 0) > 1 ? `${token.kol} 人喊` : first?.sender ? `${first.sender} 喊` : null, first?.text ? String(first.text).slice(0, 60) : null].filter(Boolean).join(" · ");
+    content = [chain, (token.kol || 0) > 1 ? `${token.kol} 人喊` : first?.sender ? `${first.sender} 喊` : null, alert.best ? `${alert.best.sender} 胜率 ${alert.best.winRate}%` : null, first?.text ? String(first.text).slice(0, 60) : null].filter(Boolean).join(" · ");
   }
-  showBalloon(title, content || token.address, () => openNotifiedToken(token));
+  showBalloon(title, content || token.address, () => openNotifiedToken(token, reason));
 }
 
 function showBalloon(title, content, onClick) {
@@ -690,17 +702,17 @@ function showBalloon(title, content, onClick) {
 
 function setUnseen(n) {
   unseenCount = n;
-  tray?.setToolTip(n > 0 ? `fomomo · ${n} 个新喊单未看` : "fomomo · 群喊单监听");
+  tray?.setToolTip(n > 0 ? `fomomo ${app.getVersion()} · ${n} 个新喊单未看` : `fomomo ${app.getVersion()} · 群喊单监听`);
   overlayWindow?.webContents.send("fomomo:event", { t: "unseen", count: n });
 }
 
-function openNotifiedToken(token) {
+function openNotifiedToken(token, reason = null) {
   if (compact) {
     toggleCompact(false);
     overlayWindow?.webContents.send("fomomo:event", { t: "compact", value: false });
   }
   showOverlay(true);
-  showDetail(token);
+  showDetail(token, false, reason);
 }
 
 function groupStatus(groups) {
@@ -741,6 +753,7 @@ function bootstrap() {
     tokens: tokenState,
     selected: selectedAddress ? resolveToken({ address: selectedAddress, chainHint: selectedChain }) : null,
     selectedAuto: detailAuto,
+    selectedReason: detailReason,
     gmgn: { state: gmgnState, message: gmgnMessage },
     platform: "win32",
     capabilities: { feishu: true, wechat: true, qq: true, trade: false },
@@ -748,15 +761,43 @@ function bootstrap() {
   };
 }
 
+function toggleOverlay() {
+  if (overlayWindow?.isVisible()) overlayWindow.hide();
+  else showOverlay(true);
+}
+
+/** 打包脚本写进 package.json 的版本信息（开发模式没有 → 只有版本号） */
+function appInfo() {
+  let build = null;
+  try { build = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")).fomomoBuild || null; } catch {}
+  return { version: app.getVersion(), commit: build?.commit || null, builtAt: build?.builtAt || null, shortcut: { accelerator: shortcut ?? "", ok: shortcutOk, choices: SHORTCUT_CHOICES } };
+}
+
+/** 换成 accel（"" = 不用）；和当前一样就不动 */
+function applyShortcut(accel) {
+  const next = typeof accel === "string" ? accel : DEFAULT_SHORTCUT;
+  if (next === shortcut) return;
+  if (shortcut && shortcutOk) globalShortcut.unregister(shortcut);
+  shortcut = next;
+  shortcutOk = false;
+  if (!next) return;
+  try {
+    shortcutOk = globalShortcut.register(next, toggleOverlay);
+  } catch (error) {
+    log("shortcut", `register ${next} failed: ${error.message}`);
+  }
+  log("shortcut", shortcutOk ? `${next} 已启用` : `${next} 已被其他程序占用`);
+}
+
 function createTray() {
   // nativeImage 不认 SVG；icon.ico 由 scripts/make-windows-icons.cjs 从 tray.svg 生成，含 16–256 各尺寸，系统按 DPI 取
   tray = new Tray(nativeImage.createFromPath(APP_ICON));
-  tray.setToolTip("fomomo · 群喊单监听");
+  tray.setToolTip(`fomomo ${app.getVersion()} · 群喊单监听`);
   // 双击 = 打开 dashboard 总览。Windows 双击前会先发一次 click，所以单击延迟到双击判定窗口之后再切悬浮窗
   let clickTimer = null;
   tray.on("click", () => {
     clearTimeout(clickTimer);
-    clickTimer = setTimeout(() => overlayWindow?.isVisible() ? overlayWindow.hide() : showOverlay(true), 250);
+    clickTimer = setTimeout(toggleOverlay, 250);
   });
   tray.on("double-click", () => {
     clearTimeout(clickTimer);
@@ -1088,6 +1129,10 @@ function registerIpc() {
     if (typeof value === "boolean" && app.isPackaged) app.setLoginItemSettings({ openAtLogin: value });
     return autoStartState();
   });
+  ipcMain.handle("fomomo:app-info", (event) => {
+    if (!fromDashboard(event)) throw new Error("forbidden");
+    return appInfo();
+  });
   ipcMain.on("fomomo:open-detail", (_event, token) => showDetail(token));
   ipcMain.on("fomomo:row-menu", (_event, token) => showRowMenu(token));
   ipcMain.on("fomomo:unmute-token", (_event, address) => { if (typeof address === "string") void setTokenMuted(address, false); });
@@ -1121,6 +1166,7 @@ app.on("activate", () => showOverlay(true));
 // The tray owns the application lifetime; closing/hiding every window should
 // not stop Feishu monitoring.
 app.on("window-all-closed", () => {});
+app.on("will-quit", () => globalShortcut.unregisterAll());
 app.on("before-quit", () => {
   quitting = true;
   clearTimeout(restartTimer);

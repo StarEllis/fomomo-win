@@ -148,6 +148,11 @@ $appPackage = [ordered]@{
   private = $true
   main = "windows/main.cjs"
   description = "fomomo Windows Feishu desktop shell"
+  # 设置页「版本」显示用：打包时的提交号（工作区有未提交改动时带 -dirty）与打包时间
+  fomomoBuild = [ordered]@{
+    commit = $(try { $c = (& git -C $Root rev-parse --short HEAD 2>$null); if ($LASTEXITCODE -eq 0 -and $c) { $d = (& git -C $Root status --porcelain 2>$null); if ($d) { "$c-dirty" } else { $c } } else { $null } } catch { $null })
+    builtAt = (Get-Date).ToString("yyyy-MM-dd HH:mm")
+  }
 }
 [System.IO.File]::WriteAllText((Join-Path $AppStage "package.json"), ($appPackage | ConvertTo-Json -Depth 5), [System.Text.UTF8Encoding]::new($false))
 "packages: []" | Set-Content -LiteralPath (Join-Path $AppStage "pnpm-workspace.yaml") -Encoding ascii

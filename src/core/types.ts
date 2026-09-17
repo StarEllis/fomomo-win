@@ -415,7 +415,8 @@ export interface Settings {
   /** 监听的 QQ 群 ID（OneBot group_id），与微信 / 飞书独立保存。 */
   qqGroups: string[];
   /** 悬浮窗尺寸与背景不透明度（0–1）；x / y / compact 是 Windows 壳记住的位置与收起态（macOS 不读） */
-  panel: { width: number; height: number; backgroundOpacity: number; x?: number | null; y?: number | null; compact?: boolean };
+  /** shortcut = Windows 壳显示 / 隐藏悬浮窗的全局快捷键（Electron accelerator），"" = 不用，没存过 = Ctrl+Alt+F */
+  panel: { width: number; height: number; backgroundOpacity: number; x?: number | null; y?: number | null; compact?: boolean; shortcut?: string };
   /** 新币提醒（Windows 壳）：card = 弹详情卡，notify = 只发系统提醒，off = 都不弹；seconds = 自动卡停留秒数；其余是提醒条件 */
   popup: PopupSettings;
   /** QQ OneBot 连接：enabled 后才去连本机桥接；url / token 留空时回退到环境变量与默认地址 */
@@ -438,6 +439,8 @@ export interface PopupSettings {
   chains: string[];
   /** 老币（首喊超过 1 小时）30 分钟内又有几人喊就提醒，0 = 关 */
   heatKol: number;
+  /** 至少有一个喊单人历史胜率 ≥ 这个百分比（且至少 3 单）才提醒，0 = 不看胜率 */
+  minWinRate: number;
 }
 export interface QQSettings { enabled: boolean; url: string; token: string }
 
@@ -446,7 +449,7 @@ export const DEFAULT_SETTINGS: Settings = {
   feishuGroups: [],
   qqGroups: [],
   panel: { width: 326, height: 592, backgroundOpacity: 1 },
-  popup: { mode: "card", seconds: 6, minKol: 1, mcMin: 0, mcMax: 0, chains: [], heatKol: 2 },
+  popup: { mode: "card", seconds: 6, minKol: 1, mcMin: 0, mcMax: 0, chains: [], heatKol: 2, minWinRate: 0 },
   // 老用户按 README 设过 FOMOMO_ONEBOT_ENABLED=1：界面里还没存过 QQ 设置时沿用它，存过以后以界面为准
   qq: { enabled: process.env.FOMOMO_ONEBOT_ENABLED === "1", url: "", token: "" },
   mutedTokens: [],
@@ -500,6 +503,8 @@ export type OutEvent =
    * 各来源已选群的监听异常汇总（变化时推）：Windows 悬浮窗底栏据此显示「飞书 N 个群异常」。
    * 只列有群在异常的来源；全好时 items 为空
    */
+  /** 喊单人历史战绩（同 dashboard「喊单人」页全时段口径）：名字 → [已定价单数, 胜率 %]；Windows 悬浮窗行上显示、提醒条件用 */
+  | { t: "caller_stats"; stats: Record<string, [number, number]> }
   | { t: "source_health"; items: Array<{ source: "wechat" | "feishu" | "qq"; failing: number; error: string | null }> }
   /** 设置变更（Swift 只关心 panel 尺寸） */
   | { t: "settings"; settings: Settings }

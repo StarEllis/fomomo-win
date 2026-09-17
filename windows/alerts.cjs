@@ -8,12 +8,16 @@
  * - heat：首次喊单超过 OLD_SEC 的老币，HEAT_WINDOW_SEC 内有 ≥ heatKol 个人再喊（最近一条在 FRESH_SEC 内），
  *   同一个币 HEAT_COOLDOWN_SEC 内只提醒一次；链 / 市值过滤同样适用。
  * 第一次调用只记基线不提醒：启动时列表里已经满足条件的币不补弹。
+ * stats = 喊单人战绩（caller_stats：名字 → [单数, 胜率 %]），提醒里带上相关喊单人中胜率最高的那位；
+ * minWinRate > 0 时要求这位至少 MIN_CALLS 单且胜率达标，战绩还没到就先等。
  */
 
 const FRESH_SEC = 10 * 60;
 const OLD_SEC = 60 * 60;
 const HEAT_WINDOW_SEC = 30 * 60;
 const HEAT_COOLDOWN_SEC = 60 * 60;
+/** 少于这么多已定价单数的胜率不作数（行上也不显示） */
+const MIN_CALLS = 3;
 
 /** settings.popup → 判定用的条件（缺字段按默认：1 人即提醒、不限链 / 市值、老币 2 人再喊提醒） */
 function alertConfig(popup) {
@@ -25,6 +29,7 @@ function alertConfig(popup) {
     mcMax: Math.max(0, n(p.mcMax, 0)),
     chains: Array.isArray(p.chains) ? p.chains.map((c) => String(c).toLowerCase()) : [],
     heatKol: Math.max(0, Math.round(n(p.heatKol, 2))),
+    minWinRate: Math.max(0, Math.min(100, n(p.minWinRate, 0))),
   };
 }
 
@@ -60,6 +65,25 @@ function passesFilters(token, cfg) {
   return true;
 }
 
+/** 给定喊单人里单数够、胜率最高的那位：{ sender, calls, winRate }；stats 没到 → undefined，都不够单数 → null */
+function bestCaller(senders, stats) {
+  if (!stats || typeof stats !== "object") return undefined;
+  let best = null;
+  for (const sender of senders) {
+    const s = stats[sender];
+    if (!Array.isArray(s) || s[0] < MIN_CALLS) continue;
+    if (!best || s[1] > best.winRate) best = { sender, calls: s[0], winRate: s[1] };
+  }
+  return best;
+}
+
+/** 胜率条件：true 通过，false 不通过，null 战绩还没到 */
+function passesWinRate(best, cfg) {
+  if (cfg.minWinRate <= 0) return true;
+  if (best === undefined) return null;
+  return !!best && best.winRate >= cfg.minWinRate;
+}
+
 function createAlerter() {
   let baseline = true;
   /** address → 已经发过 new 提醒（或启动时就已达标） */
@@ -67,7 +91,7 @@ function createAlerter() {
   /** address → 上次 heat 提醒的时间（秒） */
   const heatAt = new Map();
 
-  function update(tokens, popup, nowSec = Date.now() / 1000) {
+  function update(tokens, popup, nowSec = Date.now() / 1000, stats = undefined) {
     const cfg = alertConfig(popup);
     const out = [];
     for (const t of Array.isArray(tokens) ? tokens : []) {
@@ -86,16 +110,19 @@ function createAlerter() {
       if (!newDone.has(t.address)) {
         const crossed = kthSenderTime(mentions, cfg.minKol);
         if (crossed !== null && crossed >= nowSec - FRESH_SEC) {
-          const pass = passesFilters(t, cfg);
-          if (pass === true) { newDone.add(t.address); out.push({ kind: "new", token: t }); continue; }
+          const best = bestCaller(new Set(mentions.map((m) => m.sender)), stats);
+          if (passesFilters(t, cfg) === true && passesWinRate(best, cfg) === true) { newDone.add(t.address); out.push({ kind: "new", token: t, best: best || null }); continue; }
         } else if (crossed !== null) {
           newDone.add(t.address); // 达标太久了（回灌 / 条件刚放宽），不再补弹
         }
       }
 
       if (heatReady && !(nowSec - (heatAt.get(t.address) ?? -Infinity) < HEAT_COOLDOWN_SEC) && passesFilters(t, cfg) === true) {
-        heatAt.set(t.address, nowSec);
-        out.push({ kind: "heat", token: t, recent: hot });
+        const best = bestCaller(new Set(mentions.filter((m) => m.time >= nowSec - HEAT_WINDOW_SEC).map((m) => m.sender)), stats);
+        if (passesWinRate(best, cfg) === true) {
+          heatAt.set(t.address, nowSec);
+          out.push({ kind: "heat", token: t, recent: hot, best: best || null });
+        }
       }
     }
     baseline = false;
@@ -105,4 +132,12 @@ function createAlerter() {
   return { update };
 }
 
-module.exports = { createAlerter, alertConfig, recentSenders, passesFilters, HEAT_WINDOW_SEC, OLD_SEC };
+/** 弹卡 / 气泡上的「为什么提醒」一行 */
+function alertReason(a) {
+  const who = a.best ? ` · ${a.best.sender} 胜率 ${a.best.winRate}%` : "";
+  if (a.kind === "heat") return { kind: "heat", text: `🔥 30 分钟内 ${a.recent} 人再喊${who}` };
+  const kol = a.token.kol || 0;
+  return { kind: "new", text: `新${kol > 1 ? ` · ${kol} 人喊` : ""}${who}` };
+}
+
+module.exports = { createAlerter, alertConfig, alertReason, recentSenders, passesFilters, HEAT_WINDOW_SEC, OLD_SEC, MIN_CALLS };

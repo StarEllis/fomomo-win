@@ -190,8 +190,12 @@ export function sanitizePanel(patch: Partial<Settings["panel"]> | undefined, cur
     x: pos(p.x, cur.x),
     y: pos(p.y, cur.y),
     compact: typeof p.compact === "boolean" ? p.compact : cur.compact ?? false,
+    shortcut: typeof p.shortcut === "string" && SHORTCUT_RE.test(p.shortcut) ? p.shortcut : cur.shortcut,
   };
 }
+
+/** 修饰键 + 一个键（字母数字 / F1–F12 / 反引号）；空串 = 关闭 */
+const SHORTCUT_RE = /^(?:(?:(?:Ctrl|Alt|Shift)\+){1,3}(?:[A-Z0-9]|`)|(?:(?:Ctrl|Alt|Shift)\+){0,3}F(?:[1-9]|1[0-2]))?$/;
 
 export function sanitizePopup(patch: Partial<PopupSettings> | undefined, cur: PopupSettings): PopupSettings {
   const p = patch && typeof patch === "object" ? patch : {};
@@ -202,6 +206,7 @@ export function sanitizePopup(patch: Partial<PopupSettings> | undefined, cur: Po
     mcMin: p.mcMin !== undefined && Number.isFinite(Number(p.mcMin)) ? Math.round(clamp(Number(p.mcMin), 0, 1e12)) : cur.mcMin,
     mcMax: p.mcMax !== undefined && Number.isFinite(Number(p.mcMax)) ? Math.round(clamp(Number(p.mcMax), 0, 1e12)) : cur.mcMax,
     chains: Array.isArray(p.chains) ? [...new Set(p.chains.filter((c): c is string => typeof c === "string").map((c) => c.trim().toLowerCase()).filter((c) => /^[a-z0-9]{1,16}$/.test(c)))].slice(0, 16) : cur.chains,
+    minWinRate: p.minWinRate !== undefined && Number.isFinite(Number(p.minWinRate)) ? Math.round(clamp(Number(p.minWinRate), 0, 100)) : cur.minWinRate,
     heatKol: p.heatKol !== undefined && Number.isFinite(Number(p.heatKol)) ? Math.round(clamp(Number(p.heatKol), 0, 20)) : cur.heatKol,
   };
 }

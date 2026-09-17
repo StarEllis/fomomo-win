@@ -37,6 +37,7 @@
     .t1{display:flex;align-items:center;gap:6px;min-width:0}.t1 h1{font-size:16px;margin:0;font-weight:650;white-space:nowrap}.t1 .name{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .chain{font-size:9px;font-weight:750;line-height:16px;padding:0 5px;border-radius:5px;background:rgba(115,167,255,.14);color:#9abaff}
     .badge-new{font-size:9px;font-weight:800;color:var(--mint);background:rgba(57,217,151,.12);padding:1px 5px;border-radius:9px}
+    .why{margin:-2px 0 8px;font-size:10.5px;font-weight:650;color:var(--mint2);background:rgba(57,217,151,.1);border:1px solid rgba(57,217,151,.25);border-radius:7px;padding:4px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.why.heat{color:#ffb56b;background:rgba(255,159,67,.1);border-color:rgba(255,159,67,.3)}
     .t2{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:4px}
     .addr{font-size:10.5px;color:var(--muted);padding:2px 4px;border-radius:5px}.addr:hover{background:var(--surface2)}
     .pill{font-size:10px;font-weight:650;padding:3px 7px;border-radius:6px;background:var(--surface);border:1px solid var(--line);color:var(--muted)}.pill:hover{color:var(--ink);background:var(--surface2)}.pill.accent{color:var(--mint);border-color:rgba(57,217,151,.35)}.pill:disabled{opacity:.45;cursor:default;color:var(--muted);background:var(--surface)}
@@ -110,7 +111,7 @@
     const TWITTER_MSG = { idle: "尚未请求", waiting_chain: "等待识别代币链", no_link: "资料里没有推特链接", unsupported: "暂不支持此类 X 链接 · 可点「打开」查看", loading: "加载中…", empty: "请求完成 · 暂无内容" };
     const THESIS_ERR = { not_logged_in: "未登录 fomo", unsupported_chain: "fomo 不支持该链", chain_unknown: "链未定，行情到了再拉", fetch_failed: "拉取失败（fomo REST 退避 / 网络），稍后自动重试", schema: "fomo 响应格式不符，未显示" };
 
-    let token = null, auto = false, identity = "", gmgnReady = false;
+    let token = null, auto = false, reason = null, identity = "", gmgnReady = false;
     let context = null, gmgnCalls = null, thesis = null, fomoLoggedIn = false;
     let gmgnTab = "gmgn", xShown = 20;
     const expanded = new Set();
@@ -159,10 +160,11 @@
       const ch = t.change, chCls = ch == null ? "dim" : ch >= 0 ? "up" : "down";
       const delta = (label, v) => `<span><label>${label}</label><span class="num ${v == null ? "dim" : v >= 0 ? "up" : "down"}">${pct(v)}</span></span>`;
       put($("#head"), `
+        ${reason?.text ? `<div class="why ${reason.kind === "heat" ? "heat" : ""}" title="${esc("为什么提醒：" + reason.text)}">${esc(reason.text)}</div>` : ""}
         <div class="ident">
           <div class="logo">${esc(sym.slice(0, 2))}${m.logo ? `<img src="${esc(m.logo)}" alt="" onerror="this.remove()"/>` : ""}</div>
           <div style="min-width:0;flex:1">
-            <div class="t1"><h1>${esc(sym)}</h1><span class="chain">${esc(chainLabel(c))}</span><span class="name">${esc(name)}</span>${auto ? `<span class="badge-new">新</span>` : ""}</div>
+            <div class="t1"><h1>${esc(sym)}</h1><span class="chain">${esc(chainLabel(c))}</span><span class="name">${esc(name)}</span>${auto && !reason ? `<span class="badge-new">新</span>` : ""}</div>
             <div class="t2"><button class="addr num" data-act="copy" title="${esc(t.address)}">${esc(shortAddr(t.address))} <span id="copied">⧉</span></button>${links.map(([l, u, a]) => u ? `<button class="pill ${a ? "accent" : ""}" data-act="url" data-url="${esc(u)}" title="${esc(u)}">${l}</button>` : `<button class="pill" disabled title="链还没识别出来，行情到了就能打开">${l}</button>`).join("")}</div>
           </div>
         </div>
@@ -317,11 +319,12 @@
     }
 
     /** 切币（或链从未知变已知 = 身份变了）：清掉上一个币的列与图，重新拉 */
-    function select(next, isAuto) {
+    function select(next, isAuto, why = null) {
       const id = `${next.market?.chain || next.chainHint || "?"}:${next.address}`;
       const sameToken = token && token.address === next.address;
       token = next;
       auto = !!isAuto;
+      reason = why && typeof why.text === "string" ? why : null;
       if (id !== identity) {
         identity = id;
         if (!sameToken) { context = null; gmgnCalls = null; thesis = null; gmgnTab = "gmgn"; xShown = 20; expanded.clear(); for (const s of document.querySelectorAll(".col")) s.scrollTop = 0; }
@@ -331,7 +334,7 @@
     }
 
     function onEvent(e) {
-      if (e.t === "detail_selected" && e.token) select(e.token, e.auto);
+      if (e.t === "detail_selected" && e.token) select(e.token, e.auto, e.reason);
       else if (e.t === "detail_pinned") { auto = false; if (token) renderHead(); }
       else if (e.t === "fomo_state") { fomoLoggedIn = !!e.loggedIn; if (token) { renderSide(); renderThesis(); } }
       else if (e.t === "ready" && Array.isArray(e.groups)) { for (const g of e.groups) if (g.username) groupNames[g.username] = g.displayName; if (token) renderCalls(); }
@@ -376,7 +379,7 @@
     window.fomomo.bootstrap().then((b) => {
       gmgnReady = b?.gmgn?.state === "ready";
       for (const e of Object.values(b?.events || {})) onEvent(e);
-      if (b?.selected && !token) select(b.selected, b.selectedAuto);
+      if (b?.selected && !token) select(b.selected, b.selectedAuto, b.selectedReason);
     });
   </script>
 </body>

@@ -155,8 +155,23 @@ async function main() {
       lastHealth = key;
       bridge.emit({ t: "source_health", items });
     }, 5_000);
+    // 喊单人战绩：启动 20s 后算一次，之后每 10 分钟（全表聚合约 0.3s，不宜更频繁）
+    const emitCallerStats = () => {
+      if (stopping) return;
+      try {
+        const stats: Record<string, [number, number]> = {};
+        for (const s of store.senderStats({})) stats[s.sender] = [s.calls, Math.round(s.winRate * 100)];
+        bridge.emit({ t: "caller_stats", stats });
+      } catch (e) {
+        console.error(`[stats] caller stats failed: ${e instanceof Error ? e.message : e}`);
+      }
+    };
+    const statsFirst = setTimeout(emitCallerStats, 20_000);
+    const statsTimer = setInterval(emitCallerStats, 10 * 60_000);
     shutdown = async () => {
       clearInterval(healthTimer);
+      clearTimeout(statsFirst);
+      clearInterval(statsTimer);
       engine.close();
       if (tradeEnabled) nativePrices.close();
       watchers.stop();
